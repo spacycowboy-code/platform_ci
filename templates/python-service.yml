@@ -72,17 +72,28 @@ lint:
 
 test:
   stage: test
+  image: python:$[[ inputs.python_version ]]-slim
   before_script:
-    - pip install -r requirements.txt pytest
-  script:
-    # 起不来的应用不值得跑测试。
-    - python -c "import importlib; m,_,a='$[[ inputs.app_module ]]'.partition(':'); getattr(importlib.import_module(m), a); print('app imported OK')"
-    # 没有测试(pytest 退出码 5)不算失败;本服务要跳过的测试写在自己的 pytest 配置里。
+    - pip install -q --upgrade pip
+    - pip install -q -r requirements.txt
+    # 测试依赖归服务:仓里有 requirements-dev.txt 就用它,平台不猜。
     - |
-      export PYTHONPATH="$CI_PROJECT_DIR:$PYTHONPATH"
-      ec=0; pytest -q || ec=$?
-      [ "$ec" -eq 5 ] && { echo "No tests collected yet"; ec=0; }
+      if [ -f requirements-dev.txt ]; then
+        pip install -q -r requirements-dev.txt
+      else
+        pip install -q pytest
+      fi
+  script:
+    # 先确认应用能被导入:导入失败时 pytest 的报错往往指向别处。
+    - python -c "import importlib,os; importlib.import_module(os.environ['APP_MODULE'].split(':')[0]); print('导入正常')"
+    - |
+      ec=0
+      pytest -q || ec=$?
+      # 5 = 没收集到测试。仓里还没有测试不算失败,但要说出来。
+      if [ "$ec" -eq 5 ]; then echo "该仓还没有测试"; ec=0; fi
       exit "$ec"
+  variables:
+    APP_MODULE: "$[[ inputs.app_module ]]"
 
 # 构建薄层并推不可变标签。薄层在这里生成,所以服务仓没有 Dockerfile。
 # 用 kaniko 而非 docker build:runner 不允许 privileged,没有守护进程可用。
