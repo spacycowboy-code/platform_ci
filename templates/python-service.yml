@@ -86,8 +86,15 @@ test:
 build:
   stage: build
   image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  services:
+    - name: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4-dind
+      alias: docker
   variables:
     TAG: "$[[ inputs.version ]]-$CI_COMMIT_SHORT_SHA"
+    DOCKER_TLS_CERTDIR: "/certs"
+    DOCKER_HOST: "tcp://docker:2376"
+    DOCKER_CERT_PATH: "/certs/client"
+    DOCKER_TLS_VERIFY: "1"
   script:
     - |
       : "${docker_user:?未设置 — 在组级 CI 变量里配置}"
