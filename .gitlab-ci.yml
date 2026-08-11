@@ -5,7 +5,7 @@
 # 基础镜像标签有两个:<pyver>-<sha>(不可变,用于追溯)与 <pyver>-latest(浮动,
 # 供服务流水线的默认 base_tag 使用)。服务的**产物**标签始终不可变;基础镜像的
 # 浮动标签只影响下一次构建,不影响已发布的服务镜像。
-stages: [check, publish]
+stages: [check, publish, deploy]
 
 variables:
   REGISTRY: "armdocker.rnd.ericsson.se"
@@ -61,3 +61,11 @@ publish-base:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes: [docker/Dockerfile.base, .gitlab-ci.yml]
+
+# 环境部署:每个环境一个任务,只在该环境的描述变更时触发。
+include:
+  - local: templates/deploy-env.yml
+    inputs:
+      env: test
+      dir: /proj/rp_ait_prod/services/test-env
+      when: on_success

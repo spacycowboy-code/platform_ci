@@ -1,0 +1,21 @@
+# 测试环境:验证"改标签 → 拉镜像 → 起容器"这条链。
+# 与生产完全隔离:独立容器名、独立端口(9011),不碰生产的 9010。
+#
+# 发布 = 改下面的镜像标签。回滚 = revert 那次提交。
+services:
+  product-structure-information:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:0.1-cf6f2d16
+    container_name: test-product-structure-information
+    restart: unless-stopped
+    # 容器内统一监听 8000(基础镜像的约定),宿主机端口才是环境的事实。
+    ports:
+      - "9011:8000"
+    environment:
+      APP_PORT: "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/swagger').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
