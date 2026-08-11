@@ -12,6 +12,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --upgrade pip
 
+# pipx / pip --user 装出来的可执行文件在这里。放进 PATH 是通用设置:
+# 不放的话,服务在构建期调用刚装好的工具会得到 127(command not found)。
+ENV PATH="/root/.local/bin:${PATH}"
+
 WORKDIR /app
 RUN mkdir -p /app/logs
 
