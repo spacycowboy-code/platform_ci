@@ -1,0 +1,52 @@
+# 用服务仓自带的 Dockerfile 构一个不可变镜像。
+#
+# 什么时候用它:同一个仓要出第二个镜像,且它的配方与共享薄层实质不同。
+# 例:审计判定器要在镜像里装 kiro-cli——那不是"装依赖 + 拷源码"能表达的。
+#
+# 为什么不给共享薄层加一个 extra_run 输入:那等于让任何服务往共享配方里注入任意构建步骤,
+# 共享的就不再是配方,而是一个占位符。"一个 Dockerfile"要消掉的是重复的配方,不是禁止
+# 存在独一份的配方——独一份的那个,就该跟需要它的服务放在一起。
+#
+# 不变量与共享模板一致:kaniko 构建(runner 无守护进程)、标签含 commit、不可覆盖。
+
+spec:
+  inputs:
+    service:
+      description: "镜像名,会拼成 proj-rvc/rp-ai/<service>"
+    dockerfile:
+      description: "服务仓里的 Dockerfile 路径"
+    job_name:
+      default: "build-extra"
+      description: "任务名,同一仓有多个额外镜像时要区分"
+    stage:
+      default: "build"
+---
+
+"$[[ inputs.job_name ]]":
+  stage: $[[ inputs.stage ]]
+  image:
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  variables:
+    IMAGE: "$REGISTRY/proj-rvc/rp-ai/$[[ inputs.service ]]"
+    TAG: "$CI_COMMIT_SHORT_SHA"
+  script:
+    - |
+      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
+      mkdir -p /kaniko/.docker
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
+    - |
+      if /kaniko/executor --context "$CI_PROJECT_DIR" \
+           --dockerfile "$CI_PROJECT_DIR/$[[ inputs.dockerfile ]]" \
+           --destination "$IMAGE:$TAG" \
+           --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
+           --snapshot-mode=redo --single-snapshot; then
+        echo "推送完成:$IMAGE:$TAG"
+      else
+        echo "构建失败。若失败原因是访问外网(例如安装第三方 CLI),说明该镜像不能在 runner 上构建。"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'

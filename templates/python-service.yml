@@ -31,6 +31,11 @@ spec:
     apt_packages:
       default: ""
       description: "本服务额外的系统包,空则不装"
+    entrypoint:
+      # 容器启动前要先做的事(如先跑数据库迁移)。给的是仓里的脚本路径,
+      # 由它自己在结尾 exec 真正的进程——启动方式属于服务。
+      default: ""
+      description: "仓内的 entrypoint 脚本路径"
     extra_pip:
       default: ""
       description: "本服务额外的 pip 安装命令,例如 pipx 装的 CLI 工具"
@@ -124,6 +129,8 @@ build:
       $([ -n "$[[ inputs.extra_pip ]]" ] && echo "RUN $[[ inputs.extra_pip ]]")
       COPY . .
       ENV APP_MODULE=$[[ inputs.app_module ]] APP_GIT_COMMIT=$CI_COMMIT_SHORT_SHA
+      $([ -n "$[[ inputs.entrypoint ]]" ] && echo "RUN chmod +x $[[ inputs.entrypoint ]]")
+      $([ -n "$[[ inputs.entrypoint ]]" ] && echo "ENTRYPOINT [\"$[[ inputs.entrypoint ]]\"]")
       EOF
       cat Dockerfile.thin
     - |
