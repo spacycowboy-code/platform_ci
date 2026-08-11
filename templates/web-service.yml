@@ -1,0 +1,85 @@
+# 前端流水线:构建静态资源,打成 nginx 镜像并推不可变标签。
+#
+# 与 Python 服务同一套不变量:kaniko 构建、标签含 commit、标签不可覆盖、部署只拉不建。
+#
+# 一个产物跑所有环境:nginx 官方镜像会对 /etc/nginx/templates/*.template 做 envsubst,
+# 所以后端上游地址由环境注入,不编译进镜像。服务仓提供 nginx.conf.template,
+# 里面用 ${...} 占位——路由是服务的事,上游是环境的事。
+
+spec:
+  inputs:
+    service:
+      description: "镜像名,会拼成 proj-rvc/rp-ai/<service>"
+    dist_dir:
+      description: "构建产物目录,相对于 context,如 dist/app/browser"
+    context:
+      default: "."
+      description: "前端工程所在子目录"
+    node_version:
+      default: "22-alpine"
+    nginx_version:
+      default: "1.27-alpine"
+    build_command:
+      default: "npm run build"
+    npm_auth_registry:
+      # 需要认证的私有 registry。凭据从 CI 变量 NPM_AUTH_B64 取,只写进构建阶段的
+      # 临时 .npmrc,装完即删——不会进入任何被推送的层。
+      default: "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/"
+---
+
+variables:
+  REGISTRY: "armdocker.rnd.ericsson.se"
+  IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
+
+stages: [build]
+
+build:
+  stage: build
+  image:
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  variables:
+    TAG: "$CI_COMMIT_SHORT_SHA"
+    CTX: "$CI_PROJECT_DIR/$[[ inputs.context ]]"
+  script:
+    - |
+      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
+      mkdir -p /kaniko/.docker
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
+    # 私有 registry 的凭据写进构建上下文里的 .npmrc,而不是 --build-arg:
+    # build-arg 会留在镜像配置里,而上下文不会被推送。
+    - |
+      if [ -n "$NPM_AUTH_B64" ]; then
+        {
+          echo "$[[ inputs.npm_auth_registry ]]:_auth=$NPM_AUTH_B64"
+          echo "$[[ inputs.npm_auth_registry ]]:always-auth=true"
+        } >> "$CTX/.npmrc"
+        echo "已注入 npm 凭据(仅存在于构建上下文)"
+      fi
+    - |
+      cat > "$CTX/Dockerfile.thin" <<EOF
+      FROM $REGISTRY/dockerhub-ericsson-remote/node:$[[ inputs.node_version ]] AS build
+      WORKDIR /app
+      COPY package.json package-lock.json .npmrc ./
+      RUN npm ci && rm -f .npmrc
+      COPY . .
+      RUN $[[ inputs.build_command ]]
+
+      FROM $REGISTRY/dockerhub-ericsson-remote/nginx:$[[ inputs.nginx_version ]]
+      # 上游地址由环境在容器启动时注入(nginx 官方镜像对 templates 做 envsubst)。
+      COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+      COPY --from=build /app/$[[ inputs.dist_dir ]] /usr/share/nginx/html
+      EOF
+      grep -v _auth "$CTX/Dockerfile.thin"
+    - |
+      /kaniko/executor \
+        --context "$CTX" \
+        --dockerfile "$CTX/Dockerfile.thin" \
+        --destination "$IMAGE:$TAG" \
+        ${CI_COMMIT_TAG:+--destination "$IMAGE:$CI_COMMIT_TAG"} \
+        --snapshot-mode=redo --single-snapshot
+    - echo "推送完成:$IMAGE:$TAG"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
