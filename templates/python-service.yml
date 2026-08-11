@@ -26,7 +26,9 @@ spec:
     python_version:
       default: "3.12"
     base_tag:
-      default: "3.12-latest"
+      # 固定标签,不用 latest:同一份源码配上后来的基础镜像会构出不同产物,
+      # 那样"标签能反查 commit"就只在服务层成立。基础镜像换代由平台改这里并发版本。
+      default: "3.12-b3708562"
       description: "基础镜像标签,由 platform-ci 发布"
     apt_packages:
       default: ""
