@@ -72,6 +72,10 @@ spec:
         docker compose ps
       "
   rules:
+    # 该环境的描述变了就触发(自动环境自动跑,手动环境出按钮)。
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes: ["deploy/$[[ inputs.env ]]/**/*"]
       when: $[[ inputs.when ]]
+    # 手动环境的按钮常在:重新应用当前描述、或换回上一个标签,都不该等到文件变更才可用。
+    - if: '$CI_COMMIT_BRANCH == "main" && "$[[ inputs.when ]]" == "manual"'
+      when: manual
