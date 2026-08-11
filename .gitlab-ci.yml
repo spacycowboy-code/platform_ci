@@ -75,3 +75,9 @@ include:
       dir: /proj/rp_ait_prod/services/prod-env
       when: manual
       env_files: "product-structure-information.env=PSI_PROD_ENV ai-portal-be.env=AUDIT_PROD_ENV grafana.env=GRAFANA_PROD_ENV"
+  - local: templates/deploy-env.yml
+    inputs:
+      env: staging-audit
+      dir: /proj/rp_ait_prod/services/staging-audit-env
+      when: manual
+      env_files: "audit-staging.env=AUDIT_STAGING_ENV"

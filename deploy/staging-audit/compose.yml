@@ -1,0 +1,100 @@
+# 技能审计的验收环境。与生产同源:同样的镜像,不同的宿主机端口、路径与上游。
+#
+# 前端跑的是与生产**完全相同的 digest**,区别只有 AUDIT_UPSTREAM 指向 9100。
+# 这就是把上游从镜像里挪出来换来的结果:一个产物,两个环境。
+services:
+  db:
+    image: mysql:8.0
+    container_name: ai-portal-audit-staging-db
+    restart: unless-stopped
+    env_file:
+      - audit-staging.env
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  audit-backend:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    container_name: ai-portal-audit-staging-backend
+    restart: unless-stopped
+    env_file:
+      - audit-staging.env
+    environment:
+      AUDIT_JUDGE_URL: "http://audit-judge:8790"
+    ports:
+      - "9100:8000"
+    volumes:
+      - /home/eniuiqr/audit-data/skillrepo:/data/skillrepo
+      - /home/eniuiqr/audit-data/logs:/app/logs
+      - /home/eniuiqr/audit-data/ssh:/root/.ssh
+    depends_on:
+      - db
+      - audit-judge
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  audit-reconciler:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    container_name: ai-portal-audit-staging-reconciler
+    restart: unless-stopped
+    env_file:
+      - audit-staging.env
+    entrypoint: ["python", "-m", "app.reconcile", "--watch"]
+    depends_on:
+      - audit-backend
+
+  audit-judge:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587
+    container_name: ai-portal-audit-staging-judge
+    restart: unless-stopped
+    env_file:
+      - audit-staging.env
+    expose:
+      - "8790"
+    volumes:
+      # 卷名写死:登录态先于本描述存在,不能让 compose 按目录名新建一套空卷。
+      - judge-kiro-home:/root/.kiro
+      - judge-kiro-share:/root/.local/share/kiro-cli
+
+  frontend:
+    # 与生产同一个 digest,只有上游不同。
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:63acaea6
+    container_name: rp-ai-portal-fe-audit
+    restart: unless-stopped
+    ports:
+      - "9101:80"
+    environment:
+      AUDIT_UPSTREAM: "http://host.docker.internal:9100"
+      # 产品结构与 grafana 这台机器上各只有一份,验收环境直接指过去。
+      PSI_UPSTREAM: "http://host.docker.internal:9010"
+      GRAFANA_UPSTREAM: "http://host.docker.internal:9401"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  judge-kiro-home:
+    external: true
+    name: ai-portal-audit-staging_judge-kiro-home
+  judge-kiro-share:
+    external: true
+    name: ai-portal-audit-staging_judge-kiro-share
+  db-data:
+    external: true
+    name: ai-portal-audit-staging_db-data
