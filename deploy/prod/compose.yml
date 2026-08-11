@@ -7,7 +7,7 @@
 # PSI_PROD_ENV 投放到本目录。
 services:
   product-structure-information:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:925f24b0
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:925f24b0@sha256:01e369ea4fda18bf1665aa246df0e72c525db133fe0e0578553e0b99aab3c24c
     container_name: product-structure-information
     restart: unless-stopped
     env_file:
@@ -26,7 +26,7 @@ services:
       start_period: 15s
 
   rtep-flow-manager:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rtep-flow-manager:ce5a702d
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rtep-flow-manager:ce5a702d@sha256:6444c98c8b4467011863152106b3fc5e385166e1b6b6f7279b0843ffaabdbb9d
     container_name: rtep-flow-manager
     restart: unless-stopped
     ports:
@@ -48,7 +48,7 @@ services:
   # 这里如实记下它属于本环境但当前不运行:profiles 让 docker compose up 跳过它。
   # 要启动就删掉 profiles 这两行——那是一个功能决定,不属于基础设施迁移。
   agent-artifex:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/agent-artifex:ead8343c
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/agent-artifex:ead8343c@sha256:40ddebadd9ec815bf838ac7e5d4cc3a4c4b08ac599ff1fd4914a7566875c1483
     container_name: agent-artifex
     restart: unless-stopped
     profiles:
@@ -69,7 +69,7 @@ services:
   # 三个容器共用两个镜像:后端与对账器是同一个镜像的两种角色,判定器是另一个镜像。
   # 容器名保持原样(ai-portal-be-*),前端 nginx 按宿主机端口 9000 反代,与容器名无关。
   audit-backend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587@sha256:93cbb243e60ed3bacba001c876ffeab5cdbd23817c8d25521ce33c561b1aef93
     container_name: ai-portal-be-backend
     restart: unless-stopped
     env_file:
@@ -100,7 +100,7 @@ services:
       start_period: 15s
 
   audit-reconciler:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587@sha256:93cbb243e60ed3bacba001c876ffeab5cdbd23817c8d25521ce33c561b1aef93
     container_name: ai-portal-be-reconciler
     restart: unless-stopped
     env_file:
@@ -112,7 +112,7 @@ services:
       - audit-backend
 
   audit-judge:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587@sha256:607e6358ba7ba0b7902eafa6bfe11e03239927b97c03cd9b4830e2d9eb31e246
     container_name: ai-portal-be-judge
     restart: unless-stopped
     env_file:
@@ -157,7 +157,7 @@ services:
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
   frontend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:63acaea6
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:63acaea6@sha256:c8bea82cbc323e22025521951056006ebffc97f06aef30b7aa4a0a747e838d31
     container_name: rp-ai-portal-fe
     restart: unless-stopped
     ports:

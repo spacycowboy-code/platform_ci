@@ -20,7 +20,7 @@ services:
       start_period: 30s
 
   audit-backend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587@sha256:93cbb243e60ed3bacba001c876ffeab5cdbd23817c8d25521ce33c561b1aef93
     container_name: ai-portal-audit-staging-backend
     restart: unless-stopped
     env_file:
@@ -45,7 +45,7 @@ services:
       start_period: 20s
 
   audit-reconciler:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587@sha256:93cbb243e60ed3bacba001c876ffeab5cdbd23817c8d25521ce33c561b1aef93
     container_name: ai-portal-audit-staging-reconciler
     restart: unless-stopped
     env_file:
@@ -55,7 +55,7 @@ services:
       - audit-backend
 
   audit-judge:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587@sha256:607e6358ba7ba0b7902eafa6bfe11e03239927b97c03cd9b4830e2d9eb31e246
     container_name: ai-portal-audit-staging-judge
     restart: unless-stopped
     env_file:
@@ -76,7 +76,7 @@ services:
 
   frontend:
     # 与生产同一个 digest,只有上游不同。
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:63acaea6
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:63acaea6@sha256:c8bea82cbc323e22025521951056006ebffc97f06aef30b7aa4a0a747e838d31
     container_name: rp-ai-portal-fe-audit
     restart: unless-stopped
     ports:
