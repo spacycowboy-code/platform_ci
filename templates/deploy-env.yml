@@ -49,7 +49,8 @@ spec:
     - 'rsync -az --delete -e "ssh $SSHBASE" "$ENV_DIR/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/"'
     # 密钥在 rsync --delete 之后投放,否则会被同步删掉。
     - |
-      for pair in $[[ inputs.env_files ]]; do
+      ENV_FILES="$[[ inputs.env_files ]]"
+      for pair in $ENV_FILES; do
         dest="${pair%%=*}"; var="${pair#*=}"
         eval "src=\$$var"
         [ -n "$src" ] && [ -f "$src" ] || { echo "变量 $var 未设置或不是 File 型"; exit 1; }

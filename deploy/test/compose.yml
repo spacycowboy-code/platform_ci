@@ -4,7 +4,7 @@
 # 发布 = 改下面的镜像标签。回滚 = revert 那次提交。
 services:
   product-structure-information:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:0.1-55a1c088
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:925f24b0
     container_name: test-product-structure-information
     restart: unless-stopped
     # 容器内统一监听 8000(基础镜像的约定),宿主机端口才是环境的事实。
