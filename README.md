@@ -7,6 +7,7 @@
 |---|---|---|
 | `docker/Dockerfile.base` | 平台 | 唯一的构建配方,构建成基础镜像 `proj-rvc/rp-ai/python-base` |
 | `templates/python-service.yml` | 平台 | 服务流水线:lint / test / 构建并推不可变镜像 |
+| `templates/web-service.yml` | 平台 | 前端:构建静态资源 + nginx 镜像,上游由环境注入 |
 | `templates/extra-image.yml` | 平台 | 同一仓的第二个镜像,用仓里自带的 Dockerfile |
 | `templates/deploy-env.yml` | 平台 | 环境部署:只拉镜像、不构建;可投放环境密钥 |
 | `deploy/<env>/compose.yml` | 环境 | 这台机器上跑什么:镜像标签 + 主机绑定 |
@@ -45,6 +46,7 @@ include:
 | 环境 | 目录 | 宿主机目录 | 触发 |
 |---|---|---|---|
 | test | `deploy/test/` | `/proj/rp_ait_prod/services/test-env` | 自动 |
+| staging-audit | `deploy/staging-audit/` | `/proj/rp_ait_prod/services/staging-audit-env` | 手动 |
 | prod | `deploy/prod/` | `/proj/rp_ait_prod/services/prod-env` | 手动 |
 
 生产环境里有 7 个服务描述,其中 `agent-artifex` 标了 `profiles: [stopped]`——它在这台机器上
@@ -60,3 +62,11 @@ include:
 - **每个后端提供 `/health`**,探针不依赖数据库或外部系统。
 - **默认值优先于必填**:只有真正属于服务身份的东西才是必填(镜像名、应用路径)。
 - **部署不在服务仓**:服务仓没有 deploy 任务,发布是环境侧的动作。
+
+## 切换旧栈时的顺序(踩过)
+
+1. 先确认目标环境的部署任务处于可触发状态,**再**停运行中的容器。
+2. 停旧栈后用 `docker ps -a` 确认没有残留容器——`docker compose down` 不会停 `profiles:`
+   后面的服务,重名会让新栈起不来。
+3. 回滚只针对本次涉及的服务;旧目录那份 compose 里可能还有已被别的环境接管的服务,
+   整份 `up -d` 会因容器名冲突而失败。
