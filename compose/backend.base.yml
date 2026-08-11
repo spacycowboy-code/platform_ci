@@ -1,0 +1,36 @@
+# 后端服务的 compose 骨架。消费仓的 compose.yml 这样用:
+#
+#   include:
+#     - .platform/backend.base.yml
+#   services:
+#     app:
+#       ports: ["9201:9201"]
+#       volumes:
+#         - /proj/rp_ait_prod/logs/rtep-flow-manager:/app/logs
+#
+# 端口、挂载、健康检查路径属于服务自身;构建配方与生命周期策略在这里统一。
+# 说明:目前镜像在服务器上构建(Artifactory 只有读权限)。拿到写权限后,
+# 把 build 换成 image: <registry>/<svc>:<sha> 即可,消费仓只改这一处。
+services:
+  app:
+    build:
+      context: .
+      dockerfile: .platform/Dockerfile.python
+      args:
+        PY_VERSION: "${PY_VERSION:-3.12}"
+        APT_PACKAGES: "${APT_PACKAGES:-git}"
+        APP_MODULE: "${APP_MODULE:?APP_MODULE 未设置}"
+        APP_PORT: "${APP_PORT:?APP_PORT 未设置}"
+        GIT_COMMIT: "${GIT_COMMIT:-dev}"
+    image: "${SERVICE_NAME:?SERVICE_NAME 未设置}:latest"
+    container_name: "${SERVICE_NAME}"
+    restart: unless-stopped
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${APP_PORT}${HEALTH_PATH:-/health}').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
