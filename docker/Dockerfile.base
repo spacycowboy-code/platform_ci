@@ -1,0 +1,22 @@
+# 唯一的构建配方。本文件在 platform-ci 自己的流水线里构建成基础镜像
+#   armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:<pyver>-<sha>
+# 服务流水线只在它之上加一层薄层(装本服务依赖 + 拷源码),那 4 行由
+# templates/python-service.yml 生成,不作为文件存在于任何服务仓。
+ARG PY_VERSION=3.12
+FROM python:${PY_VERSION}-slim
+
+# git 是所有服务都要的(版本信息、部分服务用本地 git 操作)。
+# 服务特有的系统包由薄层安装,不进基础镜像。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip
+
+WORKDIR /app
+RUN mkdir -p /app/logs
+
+# 默认以 uvicorn 起服务;需要先做迁移的服务在自己仓里放 docker-entrypoint.sh,
+# 由环境描述用 entrypoint: 覆盖即可(部署形态属于环境,不属于镜像)。
+ENV APP_PORT=8000
+CMD ["sh", "-c", "exec uvicorn \"$APP_MODULE\" --host 0.0.0.0 --port \"$APP_PORT\" \
+     $([ -f /app/log_conf.yaml ] && echo '--log-config log_conf.yaml')"]
