@@ -1,0 +1,53 @@
+# platform-ci 自己的流水线:
+#   * 校验模板能被解析(消费方锁 tag,坏模板不该发布出去)
+#   * 构建并推送基础镜像
+#
+# 基础镜像标签有两个:<pyver>-<sha>(不可变,用于追溯)与 <pyver>-latest(浮动,
+# 供服务流水线的默认 base_tag 使用)。服务的**产物**标签始终不可变;基础镜像的
+# 浮动标签只影响下一次构建,不影响已发布的服务镜像。
+stages: [check, publish]
+
+variables:
+  REGISTRY: "armdocker.rnd.ericsson.se"
+  BASE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base"
+  PY_VERSION: "3.12"
+
+check-templates:
+  stage: check
+  image: $REGISTRY/dockerhub-ericsson-remote/python:3.12-slim
+  script:
+    - pip install --quiet pyyaml
+    - |
+      python - <<'PY'
+      import pathlib, sys, yaml
+      bad = 0
+      for p in sorted(pathlib.Path("templates").glob("*.yml")):
+          head, _, body = p.read_text(encoding="utf-8").partition("\n---\n")
+          try:
+              spec = yaml.safe_load(head)
+              jobs = yaml.safe_load(body)
+          except Exception as exc:
+              print(f"{p}: 解析失败 {exc}"); bad = 1; continue
+          inputs = ((spec or {}).get("spec") or {}).get("inputs") or {}
+          required = [k for k, v in inputs.items() if not isinstance(v, dict) or "default" not in v]
+          print(f"{p}: 输入 {len(inputs)} 个(必填 {len(required)}: {required}),"
+                f"任务 {[k for k in jobs if k not in ('default','stages','variables','cache','workflow')]}")
+      sys.exit(bad)
+      PY
+    # Dockerfile 至少要能被 docker 解析:交给下一阶段的实际构建验证。
+
+publish-base:
+  stage: publish
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  script:
+    - |
+      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
+      echo "$docker_password" | docker login "$REGISTRY" -u "$docker_user" --password-stdin
+    - docker build -f docker/Dockerfile.base --build-arg PY_VERSION="$PY_VERSION"
+        -t "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA" -t "$BASE:$PY_VERSION-latest" .
+    - docker push "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
+    - docker push "$BASE:$PY_VERSION-latest"
+    - echo "已发布 $BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes: [docker/Dockerfile.base, .gitlab-ci.yml]
