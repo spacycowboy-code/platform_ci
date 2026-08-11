@@ -7,7 +7,8 @@
 |---|---|---|
 | `docker/Dockerfile.base` | 平台 | 唯一的构建配方,构建成基础镜像 `proj-rvc/rp-ai/python-base` |
 | `templates/python-service.yml` | 平台 | 服务流水线:lint / test / 构建并推不可变镜像 |
-| `templates/deploy-env.yml` | 平台 | 环境部署:只拉镜像、不构建 |
+| `templates/extra-image.yml` | 平台 | 同一仓的第二个镜像,用仓里自带的 Dockerfile |
+| `templates/deploy-env.yml` | 平台 | 环境部署:只拉镜像、不构建;可投放环境密钥 |
 | `deploy/<env>/compose.yml` | 环境 | 这台机器上跑什么:镜像标签 + 主机绑定 |
 
 ## 服务仓怎么接
@@ -15,7 +16,7 @@
 ```yaml
 include:
   - project: rp-ai-miao/platform-ci
-    ref: v0.3.0                      # 锁 tag,不要用 main
+    ref: v0.5.2                      # 锁 tag,不要用 main
     file: templates/python-service.yml
     inputs:
       service: product-structure-information
@@ -23,7 +24,8 @@ include:
 ```
 
 服务仓里**不需要** Dockerfile,也**不需要** compose。可选输入(都有默认值):
-`version`、`python_version`、`base_tag`、`apt_packages`、`extra_pip`、`ruff_version`。
+`python_version`、`base_tag`、`apt_packages`、`extra_pip`、`entrypoint`、`ruff_version`。
+镜像标签就是 commit sha;在服务仓打 git tag 会额外推一个同名标签。
 
 需要的变量已配在组级:`docker_user`、`docker_password`(推镜像),
 `DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`(部署)。
@@ -43,7 +45,11 @@ include:
 | 环境 | 目录 | 宿主机目录 | 触发 |
 |---|---|---|---|
 | test | `deploy/test/` | `/proj/rp_ait_prod/services/test-env` | 自动 |
-| prod | 待建 | 待定 | 手动 |
+| prod | `deploy/prod/` | `/proj/rp_ait_prod/services/prod-env` | 手动 |
+
+生产环境里有 7 个服务描述,其中 `agent-artifex` 标了 `profiles: [stopped]`——它在这台机器上
+本来就没在跑,如实记下而不顺手启动。密钥由部署任务从 File 型变量投放到环境目录
+(`PSI_PROD_ENV`、`AUDIT_PROD_ENV`、`GRAFANA_PROD_ENV`),不进 git。
 
 ## 约定
 
