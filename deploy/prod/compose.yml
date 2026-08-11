@@ -1,0 +1,26 @@
+# 生产环境。这个文件的 git 历史就是这台机器的部署记录。
+#
+# 发布 = 改 image: 那一行的标签并合并,然后手动触发 deploy-prod。
+# 回滚 = revert 那次提交,再触发一次——不需要重新构建。
+#
+# 密钥不在这里:product-structure-information.env 由部署任务从 CI 的 File 变量
+# PSI_PROD_ENV 投放到本目录。
+services:
+  product-structure-information:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:925f24b0
+    container_name: product-structure-information
+    restart: unless-stopped
+    env_file:
+      - product-structure-information.env
+    # 容器内统一 8000;9010 是这台机器上对外的端口,属于环境的事实。
+    ports:
+      - "9010:8000"
+    volumes:
+      - /proj/rp_ait_prod/logs/product-structure-information:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

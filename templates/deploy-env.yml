@@ -19,6 +19,12 @@ spec:
     when:
       default: "manual"
       options: ["manual", "on_success"]
+    env_files:
+      # 环境密钥归环境:形如 "目标文件名=CI变量名",空格分隔,可多个。
+      # 变量必须是 File 型;内容投放到环境目录,不进 git。
+      default: ""
+      description: '如 "svc.env=SVC_PROD_ENV"'
+
 ---
 
 "deploy-$[[ inputs.env ]]":
@@ -41,6 +47,15 @@ spec:
     # 只同步这个环境的描述,不同步任何源码——服务器上不再需要源码。
     - 'ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $HOST_DIR"'
     - 'rsync -az --delete -e "ssh $SSHBASE" "$ENV_DIR/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/"'
+    # 密钥在 rsync --delete 之后投放,否则会被同步删掉。
+    - |
+      for pair in $[[ inputs.env_files ]]; do
+        dest="${pair%%=*}"; var="${pair#*=}"
+        eval "src=\$$var"
+        [ -n "$src" ] && [ -f "$src" ] || { echo "变量 $var 未设置或不是 File 型"; exit 1; }
+        scp $SSHBASE "$src" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/$dest"
+        echo "已投放 $dest(来自 $var)"
+      done
     # 登录镜像仓库后拉取并对齐状态:up -d 只重建标签变化的服务。
     # 密钥经 stdin 送到远端,不放进 ssh 的命令串——否则它会出现在远端的进程参数里,
     # 任何能在那台机器上跑 ps 的人都看得到。
