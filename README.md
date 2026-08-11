@@ -38,8 +38,15 @@ include:
 
 ## 已知边界
 
-- 镜像在服务器上构建:Artifactory 仓库 `proj-rvc-docker-global` 目前只有读权限
-  (`rvccie` 账号推送返回 `User is unauthorized to upload`)。拿到写权限后,
-  `compose/backend.base.yml` 里的 `build` 换成 `image:` 即可,回滚也随之变成换标签。
+- 镜像仓库已实测可写:推送到 `armdocker.rnd.ericsson.se/proj-rvc/<path>` 成功
+  (Artifactory 仓库键是 `proj-rvc-docker-global`,docker 命名空间前缀是 `proj-rvc/`;
+  把仓库键当命名空间会被拒)。凭据是服务器上前端构建在用的那份(账号 `rvccie`)。
+  该账号**能推不能删**(DELETE 返回 403)。
+- 目录布局参照组织既有做法:`radio-verification-cloud` 的服务仓只保留 `.gitlab-ci.yml`,
+  部署描述集中在 `configuration-files` 仓、按环境分文件,镜像从 armdocker 拉取。
+  本仓沿用这个分工,但**不引入 Swarm / Nacos / SkyWalking**——那套是给多节点集群的,
+  我们是单机 `docker compose`,照搬只会增加不必要的部件。
+- 与组织模板的一处差异:他们的 include 用 `ref: main`,本仓要求消费方**锁 tag**。
+  五个仓共用一份模板,不锁版本时一次误改会同时打断五条流水线。
 - `rp-ai-portal-be` 需要 pipx 安装的 cisco skill-scanner,当前仍用自己的 Dockerfile;
   其余三个后端共用本仓的定义。

@@ -9,8 +9,11 @@
 #         - /proj/rp_ait_prod/logs/rtep-flow-manager:/app/logs
 #
 # 端口、挂载、健康检查路径属于服务自身;构建配方与生命周期策略在这里统一。
-# 说明:目前镜像在服务器上构建(Artifactory 只有读权限)。拿到写权限后,
-# 把 build 换成 image: <registry>/<svc>:<sha> 即可,消费仓只改这一处。
+# 镜像来源由 IMAGE_REF 决定:
+#   * 留空  -> 在服务器上构建(过渡态,与现状一致)
+#   * 有值  -> 直接拉取 CI 推好的不可变镜像,例如
+#             armdocker.rnd.ericsson.se/proj-rvc/rp-ai/<service>:<version>-<sha>
+# 切换只改这一个变量,回滚等于换标签。
 services:
   app:
     build:
