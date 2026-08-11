@@ -42,11 +42,15 @@ spec:
     - 'ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $HOST_DIR"'
     - 'rsync -az --delete -e "ssh $SSHBASE" "$ENV_DIR/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/"'
     # 登录镜像仓库后拉取并对齐状态:up -d 只重建标签变化的服务。
+    # 密钥经 stdin 送到远端,不放进 ssh 的命令串——否则它会出现在远端的进程参数里,
+    # 任何能在那台机器上跑 ps 的人都看得到。
+    - |
+      printf '%s' "$docker_password" | ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" \
+        "docker login $REGISTRY -u '$docker_user' --password-stdin >/dev/null"
     - |
       ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" "
         set -e
         cd '$HOST_DIR'
-        echo '$docker_password' | docker login $REGISTRY -u '$docker_user' --password-stdin >/dev/null
         docker compose pull
         docker compose up -d --remove-orphans
         docker compose ps
