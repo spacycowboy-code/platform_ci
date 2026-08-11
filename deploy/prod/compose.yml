@@ -24,3 +24,43 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  rtep-flow-manager:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rtep-flow-manager:ce5a702d
+    container_name: rtep-flow-manager
+    restart: unless-stopped
+    ports:
+      - "9201:8000"
+    volumes:
+      - /proj/rp_ait_prod/logs/rtep-flow-manager:/app/logs
+      - /proj/rp_ait_prod/data/rtep-flow-manager:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # 没有 env_file:该服务的 PROD_ENV 与服务器上的 .env 都是空的,生产从来没给它配过
+    # 环境变量(代码里读的 RTEP_SMTP_* 目前全未设置)。这是既有状态,迁移不改它。
+
+  # agent-artifex 在这台机器上已 Exited 6 天,10000 端口无人监听。
+  # 这里如实记下它属于本环境但当前不运行:profiles 让 docker compose up 跳过它。
+  # 要启动就删掉 profiles 这两行——那是一个功能决定,不属于基础设施迁移。
+  agent-artifex:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/agent-artifex:ead8343c
+    container_name: agent-artifex
+    restart: unless-stopped
+    profiles:
+      - stopped
+    ports:
+      - "10000:8000"
+    volumes:
+      - /proj/rp_ait_prod/logs/agent-artifex:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
