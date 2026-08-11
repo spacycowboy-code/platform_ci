@@ -84,7 +84,11 @@ services:
       - /proj/rp_ait_prod/data/ai-portal-be/rp-ai-skill:/proj/radio_ivc_rvc_workspace/ezhgmio/rp-ai-skill
       - /proj/rp_ait_prod/logs/ai-portal-be:/app/logs
       # 推技能仓用的部署密钥,只读。
-      - /proj/rp_ait_prod/data/ai-portal-be/ssh:/root/.ssh:ro
+      # 推技能仓用的部署密钥。这个路径在旧部署目录里,但私钥是 600 ezhgmio、
+      # 目录属 ezhgmio:erpait,我既读不了也建不了——所以这个目录暂时仍是环境的数据路径,
+      # 不能随旧部署目录一起退役。正确终态是像其它环境密钥一样由部署任务投放
+      # (需要 ezhgmio 移动密钥或换一把部署密钥),记在 DESIGN.md 的阻塞项里。
+      - /proj/rp_ait_prod/services/ai-portal-be/ssh:/root/.ssh:ro
     depends_on:
       - audit-judge
     healthcheck:
