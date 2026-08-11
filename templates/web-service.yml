@@ -73,6 +73,14 @@ build:
       COPY --from=build /app/$[[ inputs.dist_dir ]] /usr/share/nginx/html
       EOF
       grep -v _auth "$CTX/Dockerfile.thin"
+    # 标签不可覆盖:同一个 commit 已经有产物就不再构建。
+    # 与 python-service.yml 一致——这条保护上一版漏了。
+    - |
+      if crane manifest "$IMAGE:$TAG" >/dev/null 2>&1 || \
+         wget -q --spider "https://$REGISTRY/v2/proj-rvc/rp-ai/$[[ inputs.service ]]/manifests/$TAG" 2>/dev/null; then
+        echo "标签 $IMAGE:$TAG 已存在,跳过构建(标签不可覆盖)"
+        exit 0
+      fi
     - |
       /kaniko/executor \
         --context "$CTX" \
