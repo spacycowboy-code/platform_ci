@@ -74,4 +74,4 @@ include:
       env: prod
       dir: /proj/rp_ait_prod/services/prod-env
       when: manual
-      env_files: "product-structure-information.env=PSI_PROD_ENV"
+      env_files: "product-structure-information.env=PSI_PROD_ENV ai-portal-be.env=AUDIT_PROD_ENV grafana.env=GRAFANA_PROD_ENV"

@@ -64,3 +64,92 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ---- 技能审计栈 ----
+  # 三个容器共用两个镜像:后端与对账器是同一个镜像的两种角色,判定器是另一个镜像。
+  # 容器名保持原样(ai-portal-be-*),前端 nginx 按宿主机端口 9000 反代,与容器名无关。
+  audit-backend:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    container_name: ai-portal-be-backend
+    restart: unless-stopped
+    env_file:
+      - ai-portal-be.env
+    environment:
+      AUDIT_JUDGE_URL: "http://audit-judge:8790"
+    ports:
+      - "9000:8000"
+    volumes:
+      # 技能仓的工作副本。容器内路径当年取的是某个人的个人目录,先照原样保留:
+      # 改它要同时改代码里的默认值,属于另一件事。
+      - /proj/rp_ait_prod/data/ai-portal-be/rp-ai-skill:/proj/radio_ivc_rvc_workspace/ezhgmio/rp-ai-skill
+      - /proj/rp_ait_prod/logs/ai-portal-be:/app/logs
+      # 推技能仓用的部署密钥,只读。
+      - /proj/rp_ait_prod/services/ai-portal-be/ssh:/root/.ssh:ro
+    depends_on:
+      - audit-judge
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  audit-reconciler:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    container_name: ai-portal-be-reconciler
+    restart: unless-stopped
+    env_file:
+      - ai-portal-be.env
+    environment:
+      RECONCILE_INTERVAL: "300"
+    entrypoint: ["python", "-m", "app.reconcile", "--watch"]
+    depends_on:
+      - audit-backend
+
+  audit-judge:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587
+    container_name: ai-portal-be-judge
+    restart: unless-stopped
+    env_file:
+      - ai-portal-be.env
+    expose:
+      - "8790"
+    volumes:
+      # 判定器的登录态。卷名写死成现有的名字:compose 默认按项目目录派生卷名,
+      # 换目录就会挂到一对空卷上,判定器表现为未登录,所有上传 fail-closed 转复核。
+      - judge-kiro-home:/root/.kiro
+      - judge-kiro-share:/root/.local/share/kiro-cli
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: rp-ai-grafana
+    restart: unless-stopped
+    env_file:
+      - grafana.env
+    environment:
+      GF_SERVER_ROOT_URL: "http://100.77.162.66:9001/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SAMESITE: "lax"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+    ports:
+      - "9401:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      # 数据源与仪表盘定义随环境描述一起同步过去,不再从服务器上的源码目录挂。
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  # 声明为外部卷:这些数据先于本描述存在,compose 不该按项目名新建一套。
+  judge-kiro-home:
+    external: true
+    name: ai-portal-be_judge-kiro-home
+  judge-kiro-share:
+    external: true
+    name: ai-portal-be_judge-kiro-share
+  grafana-data:
+    external: true
+    name: ai-portal-be_grafana-data
