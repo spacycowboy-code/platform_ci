@@ -4,7 +4,7 @@
 # 发布 = 改下面的镜像标签。回滚 = revert 那次提交。
 services:
   product-structure-information:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:0.1-cf6f2d16
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:0.1-55a1c088
     container_name: test-product-structure-information
     restart: unless-stopped
     # 容器内统一监听 8000(基础镜像的约定),宿主机端口才是环境的事实。
@@ -14,7 +14,7 @@ services:
       APP_PORT: "8000"
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/swagger').status == 200 else 1)"]
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3
