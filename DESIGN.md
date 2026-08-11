@@ -2,7 +2,7 @@
 
 > 范围:`rp-ai-miao` 下的四个 Python 后端(`rp-ai-portal-be`、`rtep-flow-manager`、
 > `product-structure-information`、`agent-artifex`)与前端 `rp-ai-portal-fe`。
-> 状态:抽象已定,实施中。
+> 状态:抽象已定;构建与部署两侧均已在测试环境端到端验证。生产切换未做。
 
 ## 要解决什么
 
@@ -45,14 +45,16 @@
 
 抽象是否成立,用这六条验,不靠判断:
 
-| 判据 | 怎么测 | 目标 |
+| 判据 | 目标 | 实测结果(试点:`product-structure-information`) |
 |---|---|---|
-| 单一事实来源 | 在所有仓 grep 一个具体值(`9010`、`3.12`、部署主机名) | 各出现 1 次 |
-| 变更影响面 = 变更意图 | 改部署流程 / 改一个服务的端口 / 改代码,各触及几个仓 | 1 / 1 / 1 |
-| 构建与部署解耦 | 回滚一次,是否需要重新构建 | 不需要 |
-| 不可变 | 同一 tag 的 digest 是否恒定;能否覆盖 tag | 恒定;禁止覆盖 |
-| 可追溯 | 从生产容器的镜像标签能否反查到 commit | 能 |
-| 故障可控 | 平台变更后,未升版本的消费方是否受影响 | 不受 |
+| 不可变 + 可追溯 | 同一 tag digest 恒定;能反查 commit | CI 推送的 `sha256:77dc03f…`、仓库里的、容器正在跑的**三方一致**;tag 含 commit sha |
+| 构建与部署解耦 | 部署不重新构建 | 部署日志只有 `Pulled` / `Recreated`,无构建;宿主机部署目录里只有 `compose.yml`,**没有源码** |
+| 故障可控 | 未升版本的消费方不受影响 | 试点锁 `v0.2.0` 时,main 上的 kaniko 修复没有流过去(仍报旧的 dind 错);升到 `v0.3.0` 才生效 |
+| 单一事实来源 | 一个事实出现 1 次 | 试点仓 `.gitlab-ci.yml` 104 → 11 行,`Dockerfile` 与 `docker-compose.yml` 删除(−168 / +19) |
+| 变更影响面 = 变更意图 | 1 / 1 / 1 | 一次发布只改了环境描述里的一行标签 |
+| 环境隔离 | 改一个环境不影响另一个 | 测试环境 9011 healthy 的同时,生产 9010 `/docs` 仍 200,全程未动 |
+
+未完全可测的一条:"改部署流程只触及 1 个仓"要等第二个仓迁完才能验。
 
 ## 落到仓库
 
@@ -107,9 +109,22 @@ platform-ci/                      ← 平台 + 环境
 | 凭据 | 前端构建在用的那份(账号 `rvccie`)即可推送;该账号**能推不能删**(DELETE 返回 403) |
 | 生产机能否拉 | 能,实测拉取成功 |
 | GitLab 容器仓库 | 不可用,TCP 5050 超时 |
+| **runner 不允许 privileged** | dind 报 `mount: permission denied (are you root?)`,`docker build` 在 CI 里不可用 |
+| **无守护进程的构建** | kaniko 可用,镜像经 Artifactory 的 `gcr-ericsson-remote` 代理拉取;基础镜像与服务镜像都是这样构出来的 |
+| **组级 CI 变量** | 需要组 Owner;Maintainer 只能写项目级 |
+| **组级已有的变量** | `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_SSH_KEY` / `PROD_GITLAB_TOKEN` / `NPM_AUTH_B64` 都在组级(此前只查项目级,曾误判为"不存在") |
 | Python 统一到 3.12 | 可行。portal-be 全部依赖在 3.12 装通,`cisco-ai-skill-scanner==2.0.12`(唯一硬约束)也装通并可运行 |
-| 健康检查 | 只有 `agent-artifex` 与 `portal-be` 有 `/health`,另两个打的是 `/docs`、`/swagger`,需各补三行 |
-| 审批规则 | 该实例支持(approval rules 接口返回 200),可按路径设审批而不只靠约定 |
+| 健康检查 | `agent-artifex` 与 `portal-be` 有 `/health`;`product-structure-information` 已补(本轮);`rtep-flow-manager` 待补。原先打的 `/swagger` 在该应用里**不存在**,生产 9010 实测同样 404——那条健康检查一直失效 |
+| 审批规则 | 该实例支持(approval rules 接口返回 200) |
+
+## 约定
+
+| 约定 | 说明 |
+|---|---|
+| 容器内端口 | 统一 `8000`(基础镜像默认 `APP_PORT`);宿主机端口是环境的事实,写在环境描述里 |
+| 服务镜像标签 | `<version>-<commit sha>`,不可覆盖;构建前先查,已存在则跳过 |
+| 基础镜像标签 | `<pyver>-<sha>`(不可变)与 `<pyver>-latest`(浮动)。浮动标签只影响下一次构建,不影响已发布的服务镜像 |
+| 健康探针 | 每个后端提供 `/health`,不依赖数据库或外部系统——否则探针失败会分不清"服务挂了"和"依赖挂了" |
 
 ## 参照与不照搬
 
@@ -123,16 +138,28 @@ platform-ci/                      ← 平台 + 环境
 一处刻意的差异:他们的 `include` 用 `ref: main`(不锁版本)。本仓要求消费方锁 tag。
 五个仓共用一份模板,不锁版本时一次误改会同时打断五条流水线。
 
-## 迁移顺序
+## 迁移顺序与当前状态
 
-1. 补 `/health`(两个仓)、统一 Python 3.12、把 `product-structure-information` 的
-   5 条 `pytest --ignore` 挪进它自己的 pytest 配置。三步各自独立可回退。
-2. `platform-ci` 构建并推基础镜像,打 tag 发布模板。
-3. 试点 `product-structure-information`:先只换流水线,用 CI lint 导出渲染后的完整配置与
-   现状逐行对比;再切到镜像部署。
-4. `rtep-flow-manager`、`agent-artifex`。
-5. `rp-ai-portal-be` 最后:它的 judge / reconciler / db 三个服务进环境描述,
-   `PROD_ENV` 推送与 skill 仓 SSH key 自愈是它独有的步骤。
+| # | 步骤 | 状态 |
+|---|---|---|
+| 1 | `platform-ci`:构建配方、服务模板、环境部署模板、自身流水线 | 完成,发布至 `v0.3.0` |
+| 2 | 基础镜像 `python-base:3.12-*` | 已发布 |
+| 3 | 试点 `product-structure-information`:换流水线、删 Dockerfile/compose、补 `/health`、pytest 排除项归位 | 完成,已产出服务镜像 |
+| 4 | 测试环境 `deploy/test`(端口 9011)端到端验证 | 完成,容器 healthy |
+| 5 | `deploy/prod` 与生产切换 | **未做** |
+| 6 | `rtep-flow-manager`、`agent-artifex` | 未做 |
+| 7 | `rp-ai-portal-be` | 未做,放最后 |
+
+### 生产切换前要解决的一个设计点
+
+生产的 `.env`(DATABASE_URL 等)现在由各服务项目的 `PROD_ENV` 变量推送到各自目录。环境
+集中后,密钥归环境:应改为 `platform-ci` 里按服务一份 env 文件变量,由环境部署任务投放到
+环境目录。切换时该服务的宿主机端口会有秒级中断(停旧容器、起新容器)。
+
+### `rp-ai-portal-be` 的一个坑
+
+判定器的登录态存在**命名卷**里,卷名由 compose 项目目录名派生。迁到环境目录会使卷名改变,
+表现为判定器"忽然未登录",继而所有上传 fail-closed 转复核。环境描述里必须显式声明外部卷名。
 
 ## 边界
 

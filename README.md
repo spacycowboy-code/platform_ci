@@ -1,12 +1,13 @@
 # platform-ci
 
-`rp-ai-miao` 下后端服务共用的构建配方、流水线模板与各环境的部署描述。
-抽象与判据见 [DESIGN.md](DESIGN.md)。
+`rp-ai-miao` 下后端服务共用的构建配方、流水线模板,以及各环境的部署描述。
+抽象、判据与实测结果见 [DESIGN.md](DESIGN.md)。
 
 | 路径 | 归属 | 内容 |
 |---|---|---|
-| `docker/Dockerfile.base` | 平台 | 唯一的构建配方,构建成基础镜像 |
-| `templates/python-service.yml` | 平台 | 服务流水线:lint / test / 构建并推镜像 |
+| `docker/Dockerfile.base` | 平台 | 唯一的构建配方,构建成基础镜像 `proj-rvc/rp-ai/python-base` |
+| `templates/python-service.yml` | 平台 | 服务流水线:lint / test / 构建并推不可变镜像 |
+| `templates/deploy-env.yml` | 平台 | 环境部署:只拉镜像、不构建 |
 | `deploy/<env>/compose.yml` | 环境 | 这台机器上跑什么:镜像标签 + 主机绑定 |
 
 ## 服务仓怎么接
@@ -14,7 +15,7 @@
 ```yaml
 include:
   - project: rp-ai-miao/platform-ci
-    ref: v0.2.0                      # 锁 tag,不要用 main
+    ref: v0.3.0                      # 锁 tag,不要用 main
     file: templates/python-service.yml
     inputs:
       service: product-structure-information
@@ -24,9 +25,32 @@ include:
 服务仓里**不需要** Dockerfile,也**不需要** compose。可选输入(都有默认值):
 `version`、`python_version`、`base_tag`、`apt_packages`、`extra_pip`、`ruff_version`。
 
+需要的变量已配在组级:`docker_user`、`docker_password`(推镜像),
+`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`(部署)。
+
+## 发布与回滚
+
+合并到服务仓 `main` 后,流水线会推出 `proj-rvc/rp-ai/<service>:<version>-<sha>`,
+并在日志末尾打印完整标签。
+
+**发布** = 改 `deploy/<env>/compose.yml` 里那一行 `image:` 标签并合并。
+部署任务按 `changes: deploy/<env>/**` 触发,只重建标签变化的服务。
+
+**回滚** = revert 那次提交。不需要重新构建——产物是不可变镜像。
+
+## 环境
+
+| 环境 | 目录 | 宿主机目录 | 触发 |
+|---|---|---|---|
+| test | `deploy/test/` | `/proj/rp_ait_prod/services/test-env` | 自动 |
+| prod | 待建 | 待定 | 手动 |
+
 ## 约定
 
 - **锁版本**:消费方引用 tag。五个仓共用一份模板,不锁版本时一次误改会同时打断五条流水线。
+  这一条已被验证:试点锁 `v0.2.0` 时,main 上的构建修复没有流过去。
 - **标签不可覆盖**:标签含 commit sha;构建前先查,已存在则跳过。
+- **容器内统一监听 8000**;宿主机端口写在环境描述里。
+- **每个后端提供 `/health`**,探针不依赖数据库或外部系统。
 - **默认值优先于必填**:只有真正属于服务身份的东西才是必填(镜像名、应用路径)。
-- **部署不在服务仓**:改 `deploy/<env>/compose.yml` 里的一行标签即发布,revert 即回滚。
+- **部署不在服务仓**:服务仓没有 deploy 任务,发布是环境侧的动作。
