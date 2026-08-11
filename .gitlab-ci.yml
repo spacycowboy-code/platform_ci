@@ -55,20 +55,16 @@ publish-base:
         --dockerfile "$CI_PROJECT_DIR/docker/Dockerfile.base"
         --build-arg "PY_VERSION=$PY_VERSION"
         --destination "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
-        --destination "$BASE:$PY_VERSION-latest"
         --snapshot-mode=redo --single-snapshot
     - echo "已发布 $BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
+    # 不再发 <pyver>-latest:没有消费者该用浮动标签,而它的存在正好让"同一份源码
+    # 构出不同产物"这种错误有机可乘——本项目已经踩过一次(见 DESIGN.md)。
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes: [docker/Dockerfile.base, .gitlab-ci.yml]
 
 # 环境部署:每个环境一个任务,只在该环境的描述变更时触发。
 include:
-  - local: templates/deploy-env.yml
-    inputs:
-      env: test
-      dir: /proj/rp_ait_prod/services/test-env
-      when: on_success
   - local: templates/deploy-env.yml
     inputs:
       env: prod
