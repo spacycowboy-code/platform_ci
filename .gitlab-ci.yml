@@ -38,23 +38,25 @@ check-templates:
 
 publish-base:
   stage: publish
-  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
-  services:
-    - name: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4-dind
-      alias: docker
-  variables:
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_HOST: "tcp://docker:2376"
-    DOCKER_CERT_PATH: "/certs/client"
-    DOCKER_TLS_VERIFY: "1"
+  # runner 不允许 privileged,所以没有 docker daemon 可用(dind 报
+  # "mount: permission denied")。kaniko 在用户态构建,不需要守护进程。
+  image:
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
   script:
     - |
       : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
-      echo "$docker_password" | docker login "$REGISTRY" -u "$docker_user" --password-stdin
-    - docker build -f docker/Dockerfile.base --build-arg PY_VERSION="$PY_VERSION"
-        -t "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA" -t "$BASE:$PY_VERSION-latest" .
-    - docker push "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
-    - docker push "$BASE:$PY_VERSION-latest"
+      mkdir -p /kaniko/.docker
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "$CI_PROJECT_DIR"
+        --dockerfile "$CI_PROJECT_DIR/docker/Dockerfile.base"
+        --build-arg "PY_VERSION=$PY_VERSION"
+        --destination "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
+        --destination "$BASE:$PY_VERSION-latest"
+        --snapshot-mode=redo --single-snapshot
     - echo "已发布 $BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'

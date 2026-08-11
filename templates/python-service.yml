@@ -82,28 +82,23 @@ test:
       exit "$ec"
 
 # 构建薄层并推不可变标签。薄层在这里生成,所以服务仓没有 Dockerfile。
-# 同一标签只推一次:标签含 commit sha,重复流水线会命中已存在的标签并跳过。
+# 用 kaniko 而非 docker build:runner 不允许 privileged,没有守护进程可用。
+# 标签含 commit sha,已存在则跳过——标签不可覆盖。
 build:
   stage: build
-  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
-  services:
-    - name: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4-dind
-      alias: docker
+  image:
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
   variables:
     TAG: "$[[ inputs.version ]]-$CI_COMMIT_SHORT_SHA"
-    DOCKER_TLS_CERTDIR: "/certs"
-    DOCKER_HOST: "tcp://docker:2376"
-    DOCKER_CERT_PATH: "/certs/client"
-    DOCKER_TLS_VERIFY: "1"
   script:
     - |
-      : "${docker_user:?未设置 — 在组级 CI 变量里配置}"
-      : "${docker_password:?未设置 — 在组级 CI 变量里配置}"
-      echo "$docker_password" | docker login "$REGISTRY" -u "$docker_user" --password-stdin
-    - |
-      if docker manifest inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
-        echo "$IMAGE:$TAG 已存在,跳过构建(标签不可覆盖)"; exit 0
-      fi
+      : "${docker_user:?未设置 — 在项目或组的 CI 变量里配置}"
+      : "${docker_password:?未设置}"
+      mkdir -p /kaniko/.docker
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
     - |
       cat > Dockerfile.thin <<EOF
       FROM $BASE_IMAGE
@@ -115,8 +110,13 @@ build:
       ENV APP_MODULE=$[[ inputs.app_module ]] APP_GIT_COMMIT=$CI_COMMIT_SHORT_SHA
       EOF
       cat Dockerfile.thin
-    - docker build -f Dockerfile.thin -t "$IMAGE:$TAG" .
-    - docker push "$IMAGE:$TAG"
+    - |
+      /kaniko/executor \
+        --context "$CI_PROJECT_DIR" \
+        --dockerfile "$CI_PROJECT_DIR/Dockerfile.thin" \
+        --destination "$IMAGE:$TAG" \
+        --snapshot-mode=redo --single-snapshot \
+        --skip-unused-stages
     - echo "推送完成:$IMAGE:$TAG — 在 platform-ci 的 deploy/<env>/compose.yml 里改成这个标签即发布"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
