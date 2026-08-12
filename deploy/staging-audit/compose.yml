@@ -19,7 +19,7 @@ services:
       start_period: 30s
 
   audit-backend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:5f9660e8
     container_name: ai-portal-audit-staging-backend
     restart: unless-stopped
     env_file:
@@ -44,7 +44,7 @@ services:
       start_period: 20s
 
   audit-reconciler:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:5f9660e8
     container_name: ai-portal-audit-staging-reconciler
     restart: unless-stopped
     env_file:
@@ -54,7 +54,7 @@ services:
       - audit-backend
 
   audit-judge:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:f33b3587
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:5f9660e8
     container_name: ai-portal-audit-staging-judge
     restart: unless-stopped
     env_file:
