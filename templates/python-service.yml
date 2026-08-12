@@ -97,6 +97,10 @@ test:
     # 先确认应用能被导入:导入失败时 pytest 的报错往往指向别处。
     - python -c "import importlib,os; importlib.import_module(os.environ['APP_MODULE'].split(':')[0]); print('导入正常')"
     - |
+      # 仓库根目录要可导入:测试文件常以 <包>.tests.<模块> 的形式引用自己。
+      # 这一行在 v0.4.3 重写这个任务时被我丢掉了,直到 product-structure-information
+      # 升上来才暴露(ModuleNotFoundError)。
+      export PYTHONPATH="$CI_PROJECT_DIR:$PYTHONPATH"
       ec=0
       pytest -q || ec=$?
       # 5 = 没收集到测试。仓里还没有测试不算失败,但要说出来。
