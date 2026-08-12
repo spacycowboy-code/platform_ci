@@ -15,15 +15,8 @@ spec:
     context:
       default: "."
       description: "前端工程所在子目录"
-    node_version:
-      default: "22-alpine"
-    nginx_version:
-      default: "1.27-alpine"
     build_command:
       default: "npm run build"
-    npm_auth_registry:
-      # 需要认证的私有 registry。凭据从 CI 变量 NPM_AUTH_B64 取,只写进构建阶段的
-      # 临时 .npmrc,装完即删——不会进入任何被推送的层。
       default: "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/"
 ---
 
@@ -48,21 +41,21 @@ build:
     - |
       if [ -n "$NPM_AUTH_B64" ]; then
         {
-          echo "$[[ inputs.npm_auth_registry ]]:_auth=$NPM_AUTH_B64"
-          echo "$[[ inputs.npm_auth_registry ]]:always-auth=true"
+          echo "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/:_auth=$NPM_AUTH_B64"
+          echo "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/:always-auth=true"
         } >> "$CTX/.npmrc"
         echo "已注入 npm 凭据(仅存在于构建上下文)"
       fi
     - |
       cat > "$CTX/Dockerfile.thin" <<EOF
-      FROM $REGISTRY/dockerhub-ericsson-remote/node:$[[ inputs.node_version ]] AS build
+      FROM $REGISTRY/dockerhub-ericsson-remote/node:22-alpine AS build
       WORKDIR /app
       COPY package.json package-lock.json .npmrc ./
       RUN npm ci && rm -f .npmrc
       COPY . .
       RUN $[[ inputs.build_command ]]
 
-      FROM $REGISTRY/dockerhub-ericsson-remote/nginx:$[[ inputs.nginx_version ]]
+      FROM $REGISTRY/dockerhub-ericsson-remote/nginx:1.27-alpine
       # 上游地址由环境在容器启动时注入(nginx 官方镜像对 templates 做 envsubst)。
       COPY nginx.conf.template /etc/nginx/templates/default.conf.template
       COPY --from=build /app/$[[ inputs.dist_dir ]] /usr/share/nginx/html

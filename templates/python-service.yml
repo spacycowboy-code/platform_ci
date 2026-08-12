@@ -14,30 +14,17 @@
 # 需要的组级变量:docker_user / docker_password(推镜像用)。
 # 服务仓不需要 Dockerfile,也不需要 compose。
 
+# 服务只声明属于自己的东西。Python 版本、基础镜像、ruff 版本都由平台决定,
+# 不作为输入——它们同时出现在 lint/test 与构建里,分开设置只会出现不一致。
 spec:
   inputs:
     service:
       description: "镜像名,同时用作容器名:proj-rvc/rp-ai/<service>"
     app_module:
       description: "uvicorn 应用路径,例如 hw_change_analysis.app:app"
-    version:
-      default: "0.1"
-      description: "语义版本前缀;完整标签是 <version>-<short-sha>"
-    python_version:
-      default: "3.12"
-    base_tag:
-      # 固定标签,不用 latest:同一份源码配上后来的基础镜像会构出不同产物,
-      # 那样"标签能反查 commit"就只在服务层成立。基础镜像换代由平台改这里并发版本。
-      default: "3.12-b3708562"
-      description: "基础镜像标签,由 platform-ci 发布"
     apt_packages:
       default: ""
       description: "本服务额外的系统包,空则不装"
-    entrypoint:
-      # 容器启动前要先做的事(如先跑数据库迁移)。给的是仓里的脚本路径,
-      # 由它自己在结尾 exec 真正的进程——启动方式属于服务。
-      default: ""
-      description: "仓内的 entrypoint 脚本路径"
     extra_pip:
       default: ""
       description: "本服务额外的 pip 安装命令,例如 pipx 装的 CLI 工具"
@@ -46,15 +33,13 @@ spec:
       # E9 语法错误、F63/F7 明显写错的表达式、F82 未定义名字——这些报出来基本都是真问题。
       default: "E9,F63,F7,F82"
       description: "会让流水线失败的 ruff 规则"
-    ruff_version:
-      default: "0.8.4"
 ---
 
 include:
   - local: templates/_build-common.yml
 
 default:
-  image: python:$[[ inputs.python_version ]]-slim
+  image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562
 
 stages: [lint, test, build]
 
@@ -62,7 +47,7 @@ variables:
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   REGISTRY: "armdocker.rnd.ericsson.se"
   IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
-  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:$[[ inputs.base_tag ]]"
+  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562"
 
 cache:
   key:
@@ -76,9 +61,9 @@ workflow:
 
 lint:
   stage: lint
-  image: python:$[[ inputs.python_version ]]-slim
+  image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562
   before_script:
-    - pip install -q ruff==$[[ inputs.ruff_version ]]
+    - pip install -q ruff==0.8.4
   script:
     # 阻塞的只有这几类:语法错误、未定义名字、f-string 缺占位符——几乎不会误报,
     # 报出来就是真问题。全量检查只提示:存量告警清不清,是各服务自己的事。
@@ -87,7 +72,7 @@ lint:
 
 test:
   stage: test
-  image: python:$[[ inputs.python_version ]]-slim
+  image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562
   before_script:
     - pip install -q --upgrade pip
     - pip install -q -r requirements.txt
@@ -125,7 +110,6 @@ build:
     APT_PACKAGES: "$[[ inputs.apt_packages ]]"
     EXTRA_PIP: "$[[ inputs.extra_pip ]]"
     APP_MODULE: "$[[ inputs.app_module ]]"
-    ENTRYPOINT_PATH: "$[[ inputs.entrypoint ]]"
   script:
     - !reference [.tag-guard, script]
     # 引号包住的 heredoc:下面就是 Dockerfile 原文,不做任何变量替换。
@@ -155,9 +139,11 @@ build:
       ENV APP_MODULE=${APP_MODULE} APP_GIT_COMMIT=${GIT_COMMIT}
       DOCKERFILE
     - |
-      # Dockerfile 表达不了条件 ENTRYPOINT,需要时追加两行。
-      if [ -n "$ENTRYPOINT_PATH" ]; then
-        printf 'RUN chmod +x %s\nENTRYPOINT ["%s"]\n' "$ENTRYPOINT_PATH" "$ENTRYPOINT_PATH" >> Dockerfile.thin
+      # 约定:仓库根目录有 docker-entrypoint.sh 就用它作容器入口(启动前跑迁移之类)。
+      # Dockerfile 表达不了条件 ENTRYPOINT,所以在这里追加。
+      if [ -f docker-entrypoint.sh ]; then
+        printf 'RUN chmod +x /app/docker-entrypoint.sh\nENTRYPOINT ["/app/docker-entrypoint.sh"]\n' >> Dockerfile.thin
+        echo "检测到 docker-entrypoint.sh,已设为容器入口"
       fi
       cat Dockerfile.thin
     - |

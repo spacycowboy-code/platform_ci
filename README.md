@@ -108,51 +108,6 @@ docker inspect <容器名> --format '{{.Config.Image}} {{.Image}}'
 
 要加一个,在部署任务的 `env_files` 里加一项 `目标文件名=变量名`。
 
-## 接入新服务
-
-在服务仓写一个 `.gitlab-ci.yml`,内容只有 include 和几个输入。后端:
-
-```yaml
-include:
-  - project: rp-ai-miao/platform-ci
-    ref: v0.12.0                     # 锁版本,不要写 main
-    file: templates/python-service.yml
-    inputs:
-      service: 服务名               # 也是镜像名
-      app_module: 包.模块:app       # uvicorn 启动目标
-```
-
-前端:
-
-```yaml
-include:
-  - project: rp-ai-miao/platform-ci
-    ref: v0.12.0
-    file: templates/web-service.yml
-    inputs:
-      service: 服务名
-      context: 前端工程所在子目录
-      dist_dir: 构建产物目录
-```
-
-服务仓不需要 Dockerfile,也不需要 compose。其余输入都有默认值,按需覆盖:
-
-| 输入 | 默认 | 什么时候要改 |
-|---|---|---|
-| `python_version` | `3.12` | 依赖不兼容 3.12 |
-| `apt_packages` | 空 | 需要额外系统包 |
-| `extra_pip` | 空 | 需要在镜像里装 pip 之外的工具 |
-| `entrypoint` | 空 | 启动前要先做事(如跑数据库迁移) |
-| `ruff_select` | `E9,F63,F7,F82` | 想让更多 lint 规则阻塞流水线 |
-| `base_tag` | 固定标签 | 平台发了新基础镜像 |
-
-测试依赖写本仓 `requirements-dev.txt`(有就用它);要跳过哪些测试写本仓的 pytest 配置。
-
-服务还要提供 `/health`,返回 200 即可,不要依赖数据库或外部系统——它是容器健康检查用的。
-
-接完后新增一个环境条目:在 `deploy/<环境>/compose.yml` 里加一段 `services:`,写镜像、
-`container_name`、宿主机端口、要挂的目录。容器里统一监听 8000。
-
 ## 排查
 
 | 现象 | 原因 | 怎么办 |
@@ -167,47 +122,6 @@ include:
 | 审计判定器变成"未登录",所有上传转人工复核 | 判定器登录态在命名卷里,卷名随 compose 项目目录变化 | 环境描述里的卷必须是 `external` 并写死卷名 |
 | 同一个标签的内容变了 | 服务仓锁的模板版本早于标签保护 | 把该仓 `.gitlab-ci.yml` 的 `ref` 升上去 |
 | 改了模板但没生效 | 服务仓锁着旧版本 | 升 `ref`;改保护类逻辑时要一次升完所有仓 |
-
-## 切换一个还在用旧方式部署的服务
-
-按顺序,每步验证:
-
-1. 先确认目标环境的部署任务可触发(手动任务在同一条流水线里只能点一次)。
-2. 停旧栈,`docker ps -a` 确认无残留。
-3. 点部署任务,按健康端点验证。
-4. 失败时只回滚本次涉及的服务;旧目录那份 compose 里可能有已归别的环境管理的服务,整份
-   `up -d` 会因容器名冲突失败。
-
-## 本仓自己的版本号
-
-服务仓锁 `ref`,所以这里的 tag 必须对消费方有意义:
-
-- **只有影响消费方的改动才发版本**:模板的行为、输入、保护逻辑,或基础镜像换代。
-- **只改文档、注释、或本仓自己的流水线,不发版本。**
-- 同一处的反复修正合并成一个版本再发,不要每次编辑一个 tag。
-
-已发的 tag 不移动、不删除。前 29 个 tag 是重构期间边做边发的,里面有只改文档的,也有修正上一个
-tag 的;从 `v0.14.0` 起按上面三条执行。
-
-## 生产必须先过验收
-
-`deploy-prod` 声明了 `needs: deploy-staging-audit(optional)`:
-
-- 一次改动同时动了验收和生产的描述 → 验收部署成功后才允许部生产,验收失败则生产不可触发。
-- 只动了生产描述(例如只给生产换一个镜像标签) → 验收任务不在这条流水线里,不阻塞。
-
-## 文件在哪
-
-| 路径 | 作用 |
-|---|---|
-| `templates/python-service.yml` | 后端流水线:lint / test / 构建推镜像 |
-| `templates/web-service.yml` | 前端流水线:构建静态资源 + nginx 镜像 |
-| `templates/extra-image.yml` | 同一个仓的第二个镜像(用仓里自带的 Dockerfile) |
-| `templates/deploy-env.yml` | 环境部署任务 |
-| `templates/_build-common.yml` | 上面三个构建模板共用的凭据与标签保护 |
-| `docker/Dockerfile.base` | 所有 Python 服务的基础镜像配方 |
-| `deploy/prod/`、`deploy/staging-audit/` | 各环境跑什么 |
-| `.gitlab-ci.yml` | 本仓自己的流水线:校验模板、发基础镜像、部署各环境 |
 
 ## 为什么这么分
 
