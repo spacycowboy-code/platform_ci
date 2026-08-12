@@ -1,0 +1,82 @@
+# 被服务仓的部署按钮触发时执行部署。收到三个变量:
+#   DEPLOY_ENV      test / prod
+#   DEPLOY_SERVICE  镜像名
+#   DEPLOY_TAG      commit sha
+#
+# 做四件事:把该服务的镜像标签写进本环境的描述并提交(描述始终等于线上实际)、
+# 同步描述到机器、投放密钥、拉镜像并对齐容器状态。
+
+apply:
+  stage: deploy
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  rules:
+    - if: '$DEPLOY_ENV'
+  environment:
+    name: $DEPLOY_ENV
+  before_script:
+    - apk add --no-cache openssh-client rsync git
+  script:
+    - |
+      : "${DEPLOY_SERVICE:?未传}"; : "${DEPLOY_TAG:?未传}"
+      : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
+      : "${PLATFORM_PUSH_TOKEN:?未设置 — 需要能推本仓的项目访问令牌}"
+      case "$DEPLOY_ENV" in
+        test) HOST_DIR=/proj/rp_ait_prod/services/test-env ;;
+        prod) HOST_DIR=/proj/rp_ait_prod/services/prod-env ;;
+        *) echo "未知环境 $DEPLOY_ENV"; exit 1 ;;
+      esac
+      ENV_DIR="deploy/$DEPLOY_ENV"
+      test -f "$ENV_DIR/compose.yml" || { echo "$ENV_DIR/compose.yml 不存在"; exit 1; }
+    # 改标签并提交:环境描述始终等于线上跑的东西,回滚就是 revert。
+    - |
+      set -e
+      update() {
+        sed -i -E "s#(image: $REGISTRY/proj-rvc/rp-ai/$1):[A-Za-z0-9._-]+#\1:$DEPLOY_TAG#g" "$ENV_DIR/compose.yml"
+      }
+      update "$DEPLOY_SERVICE"
+      [ -n "$DEPLOY_EXTRA_SERVICE" ] && update "$DEPLOY_EXTRA_SERVICE" || true
+      git config user.email "ci@rp-ai-miao"; git config user.name "platform-ci"
+      if git diff --quiet; then
+        echo "标签未变化,仅重新应用"
+      else
+        git add "$ENV_DIR/compose.yml"
+        git commit -qm "$DEPLOY_ENV: $DEPLOY_SERVICE -> $DEPLOY_TAG"
+        for i in 1 2 3; do
+          if git push -o ci.skip "https://oauth2:${PLATFORM_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:main" 2>/dev/null; then
+            echo "已记录到 main"; break
+          fi
+          git fetch -q origin main && git rebase -q origin/main || exit 1
+        done
+      fi
+    - |
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      tr -d '\r' < "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+      printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+      ssh-keygen -y -P "" -f ~/.ssh/id_deploy >/dev/null || { echo "私钥不可解析"; exit 1; }
+    - 'SSHBASE="-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"'
+    - 'ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p $HOST_DIR"'
+    - 'rsync -az --delete -e "ssh $SSHBASE" "$ENV_DIR/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/"'
+    # 密钥在 rsync --delete 之后投放,否则会被同步删掉。
+    - |
+      ENV_FILES="$(cat "$ENV_DIR/env-files.txt" 2>/dev/null || true)"
+      for pair in $ENV_FILES; do
+        dest="${pair%%=*}"; var="${pair#*=}"
+        eval "src=\$$var"
+        [ -n "$src" ] && [ -f "$src" ] || { echo "变量 $var 未设置或不是 File 型"; exit 1; }
+        scp $SSHBASE "$src" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/$dest"
+        echo "已投放 $dest"
+      done
+    - |
+      printf '%s' "$docker_password" | ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" \
+        "docker login $REGISTRY -u '$docker_user' --password-stdin >/dev/null"
+    - |
+      ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" "
+        set -e
+        cd '$HOST_DIR'
+        docker compose pull
+        docker compose up -d --remove-orphans
+        echo '--- 本次实际运行的镜像 ---'
+        for c in \$(docker compose ps -q); do
+          docker inspect \$c --format '{{.Name}} {{.Config.Image}} {{.Image}}'
+        done
+      "

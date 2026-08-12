@@ -39,12 +39,8 @@ check-templates:
           skip = ("default", "stages", "variables", "cache", "workflow", "include")
           names = [k for k in jobs if k not in skip]
           if not sep:
-              hidden = [k for k in names if k.startswith(".")]
-              if hidden != names:
-                  print(f"{p}: 共享片段只应定义隐藏任务,实际 {names}")
-                  bad = 1
-              else:
-                  print(f"{p}: 共享片段,提供 {hidden}")
+              # 没有 --- 的是平台内部的任务文件(不被服务仓 include)
+              print(f"{p}: 平台内部,任务 {names}")
               continue
           inputs = ((spec or {}).get("spec") or {}).get("inputs") or {}
           required = [k for k, v in inputs.items() if not isinstance(v, dict) or "default" not in v]
@@ -79,22 +75,6 @@ publish-base:
       # 只在配方本身变化时重发;流水线文件的改动与基础镜像内容无关。
       changes: [docker/Dockerfile.base]
 
-# 环境部署:每个环境一个任务,只在该环境的描述变更时触发。
+# 被服务仓的部署按钮触发时执行部署。
 include:
-  - local: templates/deploy-env.yml
-    inputs:
-      env: prod
-      dir: /proj/rp_ait_prod/services/prod-env
-      when: manual
-      # 同一次改动如果也改了验收环境,必须等验收部署成功才允许部生产。
-      # 只改生产描述时验收任务不存在,optional 让它不阻塞。
-      after_env: staging-audit
-      env_files: "product-structure-information.env=PSI_PROD_ENV ai-portal-be.env=AUDIT_PROD_ENV grafana.env=GRAFANA_PROD_ENV"
-  - local: templates/deploy-env.yml
-    inputs:
-      env: staging-audit
-      dir: /proj/rp_ait_prod/services/staging-audit-env
-      # 验收环境自动部署:改了它的描述就应用。当初设成手动是为了首次切换时控制端口让位的
-      # 顺序,那一步已经完成。生产保持手动。
-      when: on_success
-      env_files: "audit-staging.env=AUDIT_STAGING_ENV"
+  - local: templates/deploy.yml

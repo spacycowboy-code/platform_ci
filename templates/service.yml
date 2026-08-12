@@ -1,0 +1,266 @@
+# 服务仓唯一需要 include 的文件。
+#
+# 流水线在所有分支上自动跑 lint / test / build,build 只校验能不能构建、不推镜像。
+# 镜像在点部署按钮时才产出:
+#   deploy-test  任意分支,把这个分支放到测试环境
+#   deploy-prod  只在 main 上,上生产
+# 两个按钮都是手动。部署本身由 platform-ci 的下游流水线执行(环境事实与密钥在那边)。
+
+spec:
+  inputs:
+    service:
+      description: "服务名,同时是镜像名"
+    kind:
+      default: "python"
+      options: ["python", "web"]
+      description: "python=后端;web=前端(node 构建 + nginx)"
+    app_module:
+      default: ""
+      description: "python 必填,如 app.main:app"
+    context:
+      default: "."
+      description: "web:前端工程所在子目录"
+    dist_dir:
+      default: ""
+      description: "web 必填,构建产物目录"
+    apt_packages:
+      default: ""
+      description: "镜像里要装的额外系统包"
+    extra_pip:
+      default: ""
+      description: "镜像里要装的额外工具(一条 shell 命令)"
+    ruff_select:
+      default: "E9,F63,F7,F82"
+      description: "会让流水线失败的 ruff 规则"
+    extra_dockerfile:
+      default: ""
+      description: "同仓第二个镜像的 Dockerfile 路径"
+    extra_service:
+      default: ""
+      description: "第二个镜像的名字"
+---
+
+variables:
+  REGISTRY: "armdocker.rnd.ericsson.se"
+  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562"
+  IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
+  EXTRA_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.extra_service ]]"
+  KIND: "$[[ inputs.kind ]]"
+  TAG: "$CI_COMMIT_SHORT_SHA"
+  CTX: "$CI_PROJECT_DIR/$[[ inputs.context ]]"
+  APT_PACKAGES: "$[[ inputs.apt_packages ]]"
+  EXTRA_PIP: "$[[ inputs.extra_pip ]]"
+  APP_MODULE: "$[[ inputs.app_module ]]"
+  EXTRA_DOCKERFILE: "$[[ inputs.extra_dockerfile ]]"
+
+stages: [lint, test, build, deploy]
+
+workflow:
+  rules:
+    # 分支上已经开了 MR 时不再跑分支流水线,避免一次推送两条。
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+
+# ---------- 校验 ----------
+
+lint:
+  stage: lint
+  image: $BASE_IMAGE
+  rules:
+    - if: '$KIND == "python"'
+  before_script:
+    - pip install -q ruff==0.8.4
+  script:
+    # 阻塞的只有语法错误、未定义名字这类几乎不会误报的规则;全量检查只提示。
+    - ruff check --select $[[ inputs.ruff_select ]] --output-format=concise .
+    - ruff check --output-format=concise . || echo "(以上为提示,不阻塞)"
+
+test:
+  stage: test
+  image: $BASE_IMAGE
+  rules:
+    - if: '$KIND == "python"'
+  before_script:
+    - pip install -q --upgrade pip
+    - pip install -q -r requirements.txt
+    - |
+      if [ -f requirements-dev.txt ]; then
+        pip install -q -r requirements-dev.txt
+      else
+        pip install -q pytest
+      fi
+  script:
+    - python -c "import importlib,os; importlib.import_module(os.environ['APP_MODULE'].split(':')[0]); print('导入正常')"
+    - |
+      # 仓库根目录要可导入:测试常以 <包>.tests.<模块> 引用自己。
+      export PYTHONPATH="$CI_PROJECT_DIR:$PYTHONPATH"
+      ec=0
+      pytest -q || ec=$?
+      if [ "$ec" -eq 5 ]; then echo "该仓还没有测试"; ec=0; fi
+      exit "$ec"
+
+# ---------- 构建 ----------
+
+.kaniko:
+  image:
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - |
+      if [ "${PUSH_IMAGE:-false}" = "true" ]; then
+        : "${docker_user:?未设置 — 在组的 CI 变量里配置}"
+        : "${docker_password:?未设置}"
+        mkdir -p /kaniko/.docker
+        printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+          "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+          > /kaniko/.docker/config.json
+      fi
+
+.build:
+  extends: .kaniko
+  stage: build
+  script:
+    - |
+      if [ "$KIND" = "web" ] && [ -n "$NPM_AUTH_B64" ]; then
+        # 私有 registry 凭据只写进构建上下文,不作为 build-arg(那会留在镜像配置里)。
+        {
+          echo "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/:_auth=$NPM_AUTH_B64"
+          echo "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/:always-auth=true"
+        } >> "$CTX/.npmrc"
+      fi
+    - |
+      if [ "$KIND" = "web" ]; then
+        cat > "$CTX/Dockerfile.thin" <<'DOCKERFILE'
+      FROM armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/node:22-alpine AS build
+      WORKDIR /app
+      COPY package.json package-lock.json .npmrc ./
+      RUN npm ci && rm -f .npmrc
+      COPY . .
+      ARG BUILD_COMMAND="npm run build"
+      RUN sh -c "$BUILD_COMMAND"
+
+      FROM armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/nginx:1.27-alpine
+      ARG DIST_DIR
+      COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+      COPY --from=build /app/${DIST_DIR} /usr/share/nginx/html
+      DOCKERFILE
+      else
+        cat > "$CTX/Dockerfile.thin" <<'DOCKERFILE'
+      ARG BASE_IMAGE
+      FROM ${BASE_IMAGE}
+
+      ARG APT_PACKAGES=""
+      RUN if [ -n "$APT_PACKAGES" ]; then \
+            apt-get update && \
+            apt-get install -y --no-install-recommends $APT_PACKAGES && \
+            rm -rf /var/lib/apt/lists/*; \
+          fi
+
+      COPY requirements.txt .
+      RUN pip install --no-cache-dir -r requirements.txt
+
+      ARG EXTRA_PIP=""
+      RUN if [ -n "$EXTRA_PIP" ]; then sh -c "$EXTRA_PIP"; fi
+
+      COPY . .
+
+      ARG APP_MODULE
+      ARG GIT_COMMIT
+      ENV APP_MODULE=${APP_MODULE} APP_GIT_COMMIT=${GIT_COMMIT}
+      DOCKERFILE
+        # 约定:根目录有 docker-entrypoint.sh 就用它作容器入口。Dockerfile 表达不了条件 ENTRYPOINT。
+        if [ -f "$CTX/docker-entrypoint.sh" ]; then
+          printf 'RUN chmod +x /app/docker-entrypoint.sh\nENTRYPOINT ["/app/docker-entrypoint.sh"]\n' >> "$CTX/Dockerfile.thin"
+        fi
+      fi
+      grep -v _auth "$CTX/Dockerfile.thin"
+    - |
+      # 标签含 commit,已存在就不再构建。
+      if [ "${PUSH_IMAGE:-false}" = "true" ] && crane manifest "$IMAGE:$TAG" >/dev/null 2>&1; then
+        echo "$IMAGE:$TAG 已存在,跳过构建"
+      else
+        if [ "${PUSH_IMAGE:-false}" = "true" ]; then
+          DEST="--destination $IMAGE:$TAG"
+        else
+          DEST="--no-push"
+          echo "只校验构建,不推送"
+        fi
+        /kaniko/executor --context "$CTX" --dockerfile "$CTX/Dockerfile.thin" \
+          --build-arg "BASE_IMAGE=$BASE_IMAGE" --build-arg "APT_PACKAGES=$APT_PACKAGES" \
+          --build-arg "EXTRA_PIP=$EXTRA_PIP" --build-arg "APP_MODULE=$APP_MODULE" \
+          --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
+          --build-arg "DIST_DIR=$[[ inputs.dist_dir ]]" \
+          --build-arg "BUILD_COMMAND=npm run build" \
+          $DEST --snapshot-mode=redo --single-snapshot --skip-unused-stages
+      fi
+    - |
+      # 同一个仓的第二个镜像(配方与薄层实质不同,用仓里自带的 Dockerfile)。
+      if [ -n "$EXTRA_DOCKERFILE" ]; then
+        if [ "${PUSH_IMAGE:-false}" = "true" ] && crane manifest "$EXTRA_IMAGE:$TAG" >/dev/null 2>&1; then
+          echo "$EXTRA_IMAGE:$TAG 已存在,跳过构建"
+        else
+          [ "${PUSH_IMAGE:-false}" = "true" ] && DEST2="--destination $EXTRA_IMAGE:$TAG" || DEST2="--no-push"
+          /kaniko/executor --context "$CI_PROJECT_DIR" \
+            --dockerfile "$CI_PROJECT_DIR/$EXTRA_DOCKERFILE" \
+            --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
+            $DEST2 --snapshot-mode=redo --single-snapshot
+        fi
+      fi
+
+build:
+  extends: .build
+  variables:
+    PUSH_IMAGE: "false"
+
+# ---------- 部署按钮 ----------
+
+deploy-test:
+  extends: .build
+  stage: deploy
+  variables:
+    PUSH_IMAGE: "true"
+  rules:
+    - when: manual
+      allow_failure: true
+  environment:
+    name: test
+
+apply-test:
+  stage: deploy
+  needs: [deploy-test]
+  trigger:
+    project: rp-ai-miao/platform-ci
+    strategy: depend
+  variables:
+    DEPLOY_ENV: "test"
+    DEPLOY_SERVICE: "$[[ inputs.service ]]"
+    DEPLOY_TAG: "$CI_COMMIT_SHORT_SHA"
+    DEPLOY_EXTRA_SERVICE: "$[[ inputs.extra_service ]]"
+
+deploy-prod:
+  extends: .build
+  stage: deploy
+  variables:
+    PUSH_IMAGE: "true"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: true
+  environment:
+    name: prod
+
+apply-prod:
+  stage: deploy
+  needs: [deploy-prod]
+  trigger:
+    project: rp-ai-miao/platform-ci
+    strategy: depend
+  variables:
+    DEPLOY_ENV: "prod"
+    DEPLOY_SERVICE: "$[[ inputs.service ]]"
+    DEPLOY_TAG: "$CI_COMMIT_SHORT_SHA"
+    DEPLOY_EXTRA_SERVICE: "$[[ inputs.extra_service ]]"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
