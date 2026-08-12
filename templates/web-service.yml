@@ -70,16 +70,32 @@ build:
       grep -v _auth "$CTX/Dockerfile.thin"
     - !reference [.tag-guard, script]
     - |
+      # 不推送时只构建做校验,推送时才写标签(打了 git tag 就多推一个同名标签)。
+      if [ "${PUSH_IMAGE:-false}" = "true" ]; then
+        DEST="--destination $IMAGE:$TAG"
+        [ -n "$CI_COMMIT_TAG" ] && DEST="$DEST --destination $IMAGE:$CI_COMMIT_TAG"
+      else
+        DEST="--no-push"
+        echo "MR 流水线:只校验构建,不推送镜像"
+      fi
+    - |
       /kaniko/executor \
         --context "$CTX" \
         --dockerfile "$CTX/Dockerfile.thin" \
-        --destination "$IMAGE:$TAG" \
-        ${CI_COMMIT_TAG:+--destination "$IMAGE:$CI_COMMIT_TAG"} \
+        $DEST \
         --snapshot-mode=redo --single-snapshot
     - echo "推送完成:$IMAGE:$TAG"
   rules:
-    # main 上构建,是发布用的产物。
+    # main:产出发布用的镜像。
     - if: '$CI_COMMIT_BRANCH == "main"'
-    # MR 上也构建:任何分支的 HEAD 都要有一个可部署的产物,否则分支改动只能靠在机器上
-    # 直接构建才能上验收环境。标签仍是 commit sha,互不覆盖。
+      variables:
+        PUSH_IMAGE: "true"
+    # 任意分支,手动带上 BUILD_IMAGE=1:也产出镜像,用于把该分支放到验收环境。
+    - if: '$CI_COMMIT_BRANCH && $BUILD_IMAGE == "1"'
+      variables:
+        PUSH_IMAGE: "true"
+    # MR:只验证能不能构建,不推送。镜像仓库里的标签删不掉(推送账号无删除权限),
+    # 每个 MR 提交都推一个会让仓库无限累积。
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      variables:
+        PUSH_IMAGE: "false"

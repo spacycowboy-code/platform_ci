@@ -23,7 +23,7 @@
 .tag-guard:
   script:
     - |
-      if crane manifest "$IMAGE:$TAG" >/dev/null 2>&1; then
+      if [ "${PUSH_IMAGE:-false}" = "true" ] && crane manifest "$IMAGE:$TAG" >/dev/null 2>&1; then
         echo "标签 $IMAGE:$TAG 已存在,跳过构建(标签不可覆盖)"
         exit 0
       fi
