@@ -18,6 +18,10 @@
 
 生产只可能来自 `main`;测试环境给分支用。除此之外没有别的环境。
 
+流水线在所有分支上都自动跑 `lint`、`test`、`build`,但 `build` **只校验能不能构建,不推镜像**。
+镜像在你点部署按钮时才产出并推上去,所以只有真正部署过的版本才有镜像。同一个 commit 第二次
+部署会跳过构建,直接用已有的那个镜像——分支上验过的产物和后来上生产的是同一个。
+
 ## 你仓里的那个文件
 
 ```yaml
@@ -58,7 +62,7 @@ env 文件。
 | `build` 说"标签已存在,跳过构建" | 这个 commit 已经有镜像 | 正常。要新产物就提交新改动 |
 | `test` 报 `ModuleNotFoundError` | 测试以 `包.tests.模块` 引用自己 | 模板已设 `PYTHONPATH`;仍失败检查本仓 pytest 配置 |
 | `test` 报缺 `httpx` 之类 | 测试依赖没声明 | 写进 `requirements-dev.txt` |
-| MR 的 `build` 通过但没有镜像 | MR 只校验能不能构建,不推送 | 要产物就点 `deploy-test` |
+| `build` 通过但仓库里没有镜像 | `build` 只校验,不推送 | 点 `deploy-test` 或 `deploy-prod`,镜像在那时产出 |
 | 容器一直 unhealthy 但服务能访问 | 健康检查打了 `localhost`,解析到 `::1`,nginx 只监听 IPv4 | 健康检查要写 `127.0.0.1` |
 | 审计判定器变成"未登录",所有上传转人工复核 | 判定器登录态在命名卷里,卷名随 compose 项目目录变化 | 环境描述里的卷必须 `external` 且写死卷名 |
 | 部署任务报某个变量"未设置" | 少了 CI 变量 | 找我,组级要有 `docker_user`/`docker_password`/`DEPLOY_*` |
