@@ -76,7 +76,8 @@ publish-base:
     # 只发固定标签,不发 <pyver>-latest:浮动的基础镜像会让同一份源码构出不同产物。
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-      changes: [docker/Dockerfile.base, .gitlab-ci.yml]
+      # 只在配方本身变化时重发;流水线文件的改动与基础镜像内容无关。
+      changes: [docker/Dockerfile.base]
 
 # 环境部署:每个环境一个任务,只在该环境的描述变更时触发。
 include:
