@@ -108,15 +108,14 @@ test:
     name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
     entrypoint: [""]
   before_script:
+    # 拉私有基础镜像也需要凭据,所以不论是否推送都要写。
     - |
-      if [ "${PUSH_IMAGE:-false}" = "true" ]; then
-        : "${docker_user:?未设置 — 在组的 CI 变量里配置}"
-        : "${docker_password:?未设置}"
-        mkdir -p /kaniko/.docker
-        printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
-          "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
-          > /kaniko/.docker/config.json
-      fi
+      : "${docker_user:?未设置 — 在组的 CI 变量里配置}"
+      : "${docker_password:?未设置}"
+      mkdir -p /kaniko/.docker
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
 
 .build:
   extends: .kaniko
