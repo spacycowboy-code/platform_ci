@@ -1,0 +1,29 @@
+# 三个构建模板共用的两段。放在一处,免得改了一处忘了另外两处——
+# extra-image 就曾因为漏了标签保护而可以覆盖已有标签。
+#
+# 由包含它的模板提供:$REGISTRY、$IMAGE、$TAG。
+
+# 构建器与仓库凭据。kaniko 在用户态构建,不需要 docker 守护进程
+# (本组 runner 不允许 privileged)。
+.kaniko:
+  image:
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  before_script:
+    - |
+      : "${docker_user:?未设置 — 在组的 CI 变量里配置}"
+      : "${docker_password:?未设置}"
+      mkdir -p /kaniko/.docker
+      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
+        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
+        > /kaniko/.docker/config.json
+
+# 标签不可覆盖:同一个 commit 已有产物就不再构建。
+# 用 !reference 引到各构建任务的 script 开头。
+.tag-guard:
+  script:
+    - |
+      if crane manifest "$IMAGE:$TAG" >/dev/null 2>&1; then
+        echo "标签 $IMAGE:$TAG 已存在,跳过构建(标签不可覆盖)"
+        exit 0
+      fi

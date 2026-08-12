@@ -45,6 +45,9 @@ spec:
       default: "0.8.4"
 ---
 
+include:
+  - local: templates/_build-common.yml
+
 default:
   image: python:$[[ inputs.python_version ]]-slim
 
@@ -104,24 +107,16 @@ test:
 
 # 构建薄层并推不可变标签。薄层在这里生成,所以服务仓没有 Dockerfile。
 # 用 kaniko 而非 docker build:runner 不允许 privileged,没有守护进程可用。
-# 标签含 commit sha,已存在则跳过——标签不可覆盖。
+# 标签含 commit sha;已存在则跳过(见 _build-common.yml 的 .tag-guard)。
 build:
   stage: build
-  image:
-    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
+  extends: .kaniko
   variables:
     # 产物由它的 commit 标识。需要语义化版本时在服务仓打 git tag,
     # 那次流水线会额外推一个同名标签——版本号是服务的事,不该由平台给默认值。
     TAG: "$CI_COMMIT_SHORT_SHA"
   script:
-    - |
-      : "${docker_user:?未设置 — 在项目或组的 CI 变量里配置}"
-      : "${docker_password:?未设置}"
-      mkdir -p /kaniko/.docker
-      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
-        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
-        > /kaniko/.docker/config.json
+    - !reference [.tag-guard, script]
     - |
       cat > Dockerfile.thin <<EOF
       FROM $BASE_IMAGE

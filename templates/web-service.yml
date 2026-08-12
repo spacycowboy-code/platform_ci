@@ -27,6 +27,9 @@ spec:
       default: "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/"
 ---
 
+include:
+  - local: templates/_build-common.yml
+
 variables:
   REGISTRY: "armdocker.rnd.ericsson.se"
   IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
@@ -35,19 +38,11 @@ stages: [build]
 
 build:
   stage: build
-  image:
-    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
+  extends: .kaniko
   variables:
     TAG: "$CI_COMMIT_SHORT_SHA"
     CTX: "$CI_PROJECT_DIR/$[[ inputs.context ]]"
   script:
-    - |
-      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
-      mkdir -p /kaniko/.docker
-      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
-        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
-        > /kaniko/.docker/config.json
     # 私有 registry 的凭据写进构建上下文里的 .npmrc,而不是 --build-arg:
     # build-arg 会留在镜像配置里,而上下文不会被推送。
     - |
@@ -73,14 +68,7 @@ build:
       COPY --from=build /app/$[[ inputs.dist_dir ]] /usr/share/nginx/html
       EOF
       grep -v _auth "$CTX/Dockerfile.thin"
-    # 标签不可覆盖:同一个 commit 已经有产物就不再构建。
-    # 与 python-service.yml 一致——这条保护上一版漏了。
-    - |
-      if crane manifest "$IMAGE:$TAG" >/dev/null 2>&1 || \
-         wget -q --spider "https://$REGISTRY/v2/proj-rvc/rp-ai/$[[ inputs.service ]]/manifests/$TAG" 2>/dev/null; then
-        echo "标签 $IMAGE:$TAG 已存在,跳过构建(标签不可覆盖)"
-        exit 0
-      fi
+    - !reference [.tag-guard, script]
     - |
       /kaniko/executor \
         --context "$CTX" \

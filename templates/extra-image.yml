@@ -22,21 +22,17 @@ spec:
       default: "build"
 ---
 
+include:
+  - local: templates/_build-common.yml
+
 "$[[ inputs.job_name ]]":
   stage: $[[ inputs.stage ]]
-  image:
-    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
+  extends: .kaniko
   variables:
     IMAGE: "$REGISTRY/proj-rvc/rp-ai/$[[ inputs.service ]]"
     TAG: "$CI_COMMIT_SHORT_SHA"
   script:
-    - |
-      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
-      mkdir -p /kaniko/.docker
-      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
-        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
-        > /kaniko/.docker/config.json
+    - !reference [.tag-guard, script]
     - |
       if /kaniko/executor --context "$CI_PROJECT_DIR" \
            --dockerfile "$CI_PROJECT_DIR/$[[ inputs.dockerfile ]]" \
