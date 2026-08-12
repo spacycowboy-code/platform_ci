@@ -78,4 +78,8 @@ build:
         --snapshot-mode=redo --single-snapshot
     - echo "推送完成:$IMAGE:$TAG"
   rules:
+    # main 上构建,是发布用的产物。
     - if: '$CI_COMMIT_BRANCH == "main"'
+    # MR 上也构建:任何分支的 HEAD 都要有一个可部署的产物,否则分支改动只能靠在机器上
+    # 直接构建才能上验收环境。标签仍是 commit sha,互不覆盖。
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
