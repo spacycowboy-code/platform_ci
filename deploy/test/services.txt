@@ -1,0 +1,4 @@
+# 镜像名 -> 本环境里要重建哪些 compose 服务。
+rp-ai-portal-be: audit-backend audit-reconciler
+skill-audit-judge: audit-judge
+rp-ai-portal-fe: frontend

@@ -55,6 +55,13 @@ apply:
       printf '%s' "$docker_password" | ssh $SSHBASE "$DEPLOY_USER@$DEPLOY_HOST" \
         "docker login $REGISTRY -u '$docker_user' --password-stdin >/dev/null"
     - |
+      # 本次要重建哪些 compose 服务,由环境描述里的 services.txt 决定,不由部署任务猜。
+      TARGETS="$(sed -n "s/^$DEPLOY_SERVICE:[[:space:]]*//p" "$ENV_DIR/services.txt")"
+      if [ -n "$DEPLOY_EXTRA_SERVICE" ]; then
+        TARGETS="$TARGETS $(sed -n "s/^$DEPLOY_EXTRA_SERVICE:[[:space:]]*//p" "$ENV_DIR/services.txt")"
+      fi
+      [ -n "$TARGETS" ] || { echo "$ENV_DIR/services.txt 里没有 $DEPLOY_SERVICE 的映射"; exit 1; }
+      echo "本次只重建: $TARGETS"
       VAR="$(echo "$DEPLOY_SERVICE" | tr 'a-z-' 'A-Z_')_TAG"
       EXTRA_VAR=""
       [ -n "$DEPLOY_EXTRA_SERVICE" ] && EXTRA_VAR="$(echo "$DEPLOY_EXTRA_SERVICE" | tr 'a-z-' 'A-Z_')_TAG"
@@ -72,10 +79,10 @@ apply:
         sort -o .env .env
         echo '--- 本环境当前各服务的版本(.env) ---'
         cat .env
-        docker compose pull
-        docker compose up -d --remove-orphans
+        docker compose pull $TARGETS
+        docker compose up -d $TARGETS
         echo '--- 本次实际运行的镜像 ---'
-        for c in \$(docker compose ps -q); do
+        for c in \$(docker compose ps -q $TARGETS); do
           docker inspect \$c --format '{{.Name}} {{.Config.Image}} {{.Image}}'
         done
       "
