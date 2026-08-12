@@ -41,6 +41,11 @@ spec:
     extra_pip:
       default: ""
       description: "本服务额外的 pip 安装命令,例如 pipx 装的 CLI 工具"
+    ruff_select:
+      # 阻塞的规则集。平台给下限,服务可以提高:
+      # E9 语法错误、F63/F7 明显写错的表达式、F82 未定义名字——这些报出来基本都是真问题。
+      default: "E9,F63,F7,F82"
+      description: "会让流水线失败的 ruff 规则"
     ruff_version:
       default: "0.8.4"
 ---
@@ -77,7 +82,7 @@ lint:
   script:
     # 阻塞的只有这几类:语法错误、未定义名字、f-string 缺占位符——几乎不会误报,
     # 报出来就是真问题。全量检查只提示:存量告警清不清,是各服务自己的事。
-    - ruff check --select E9,F63,F7,F82 --output-format=concise .
+    - ruff check --select $[[ inputs.ruff_select ]] --output-format=concise .
     - ruff check --output-format=concise . || echo "(以上为提示,不阻塞)"
 
 test:
@@ -117,25 +122,53 @@ build:
   variables:
     # 产物由 commit 标识。服务仓打 git tag 时,那次流水线会额外推一个同名标签。
     TAG: "$CI_COMMIT_SHORT_SHA"
+    APT_PACKAGES: "$[[ inputs.apt_packages ]]"
+    EXTRA_PIP: "$[[ inputs.extra_pip ]]"
+    APP_MODULE: "$[[ inputs.app_module ]]"
+    ENTRYPOINT_PATH: "$[[ inputs.entrypoint ]]"
   script:
     - !reference [.tag-guard, script]
+    # 引号包住的 heredoc:下面就是 Dockerfile 原文,不做任何变量替换。
+    # 可变的部分都是 ARG,由 kaniko 用 --build-arg 传进去。
     - |
-      cat > Dockerfile.thin <<EOF
-      FROM $BASE_IMAGE
-      $([ -n "$[[ inputs.apt_packages ]]" ] && echo "RUN apt-get update && apt-get install -y --no-install-recommends $[[ inputs.apt_packages ]] && rm -rf /var/lib/apt/lists/*")
+      cat > Dockerfile.thin <<'DOCKERFILE'
+      ARG BASE_IMAGE
+      FROM ${BASE_IMAGE}
+
+      ARG APT_PACKAGES=""
+      RUN if [ -n "$APT_PACKAGES" ]; then \
+            apt-get update && \
+            apt-get install -y --no-install-recommends $APT_PACKAGES && \
+            rm -rf /var/lib/apt/lists/*; \
+          fi
+
       COPY requirements.txt .
       RUN pip install --no-cache-dir -r requirements.txt
-      $([ -n "$[[ inputs.extra_pip ]]" ] && echo "RUN $[[ inputs.extra_pip ]]")
+
+      ARG EXTRA_PIP=""
+      RUN if [ -n "$EXTRA_PIP" ]; then sh -c "$EXTRA_PIP"; fi
+
       COPY . .
-      ENV APP_MODULE=$[[ inputs.app_module ]] APP_GIT_COMMIT=$CI_COMMIT_SHORT_SHA
-      $([ -n "$[[ inputs.entrypoint ]]" ] && echo "RUN chmod +x $[[ inputs.entrypoint ]]")
-      $([ -n "$[[ inputs.entrypoint ]]" ] && echo "ENTRYPOINT [\"$[[ inputs.entrypoint ]]\"]")
-      EOF
+
+      ARG APP_MODULE
+      ARG GIT_COMMIT
+      ENV APP_MODULE=${APP_MODULE} APP_GIT_COMMIT=${GIT_COMMIT}
+      DOCKERFILE
+    - |
+      # Dockerfile 表达不了条件 ENTRYPOINT,需要时追加两行。
+      if [ -n "$ENTRYPOINT_PATH" ]; then
+        printf 'RUN chmod +x %s\nENTRYPOINT ["%s"]\n' "$ENTRYPOINT_PATH" "$ENTRYPOINT_PATH" >> Dockerfile.thin
+      fi
       cat Dockerfile.thin
     - |
       /kaniko/executor \
         --context "$CI_PROJECT_DIR" \
         --dockerfile "$CI_PROJECT_DIR/Dockerfile.thin" \
+        --build-arg "BASE_IMAGE=$BASE_IMAGE" \
+        --build-arg "APT_PACKAGES=$APT_PACKAGES" \
+        --build-arg "EXTRA_PIP=$EXTRA_PIP" \
+        --build-arg "APP_MODULE=$APP_MODULE" \
+        --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
         --destination "$IMAGE:$TAG" \
         ${CI_COMMIT_TAG:+--destination "$IMAGE:$CI_COMMIT_TAG"} \
         --snapshot-mode=redo --single-snapshot \
