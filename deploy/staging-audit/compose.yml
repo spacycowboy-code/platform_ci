@@ -75,7 +75,7 @@ services:
 
   frontend:
     # 与生产同一个 digest,只有上游不同。
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:63acaea6
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:efbb0fb1
     container_name: rp-ai-portal-fe-audit
     restart: unless-stopped
     ports:
