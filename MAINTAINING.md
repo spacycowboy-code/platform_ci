@@ -71,16 +71,16 @@
 4. 失败时只回滚本次涉及的服务;旧目录那份 compose 里可能有已归别的环境管理的服务,整份
    `up -d` 会因容器名冲突失败。
 
-## 待实现(文档已对齐,代码还没跟上)
+## 几处实现上的约束
 
-| 项 | 状态 |
+| 约束 | 结果 |
 |---|---|
-| `deploy-test` / `deploy-prod` 两个按钮放进 `service.yml` | 未做。现在的发布方式仍是手工改环境描述里的镜像标签 |
-| `build` 在所有分支上都只校验;镜像改由部署按钮产出 | 未做。现在 `main` 上的 `build` 会自动推镜像,导致没部署过的提交也留下删不掉的标签 |
-| 五个模板合并成 `service.yml` + `deploy.yml` | 未做。现在是 5 个文件,消费方要 include 1~2 个 |
-| `v1` 通道 | 未建。消费方现在锁 `v0.14.0` |
-| 环境 `staging-audit` 改名 `test` 并转为分支用 | 未做 |
-| `v0.15.0`(输入 10→5)生效 | 已发布未启用;启用时要同时删掉 `rp-ai-portal-be` 传的 `entrypoint` 一行 |
+| 本实例项目级与组级都开着 `reject_unsigned_commits` | CI 无法提交(提交没有 GPG 签名会被 pre-receive 拒绝),所以版本不写回 git,改为写宿主机环境目录下的 `.env` |
+| 环境描述里的镜像标签写成 `${X_TAG:-上次已知}` | `.env` 缺项时用默认值,compose 不会因变量未设置而失败;默认值不代表线上实际 |
+| `deploy/<环境>/services.txt` | 镜像名 → 要重建哪些 compose 服务。部署只 `up -d` 这几个,映射缺失直接失败,不猜 |
+| runner 拉私有命名空间的镜像 | 组级 `DOCKER_AUTH_CONFIG`;kaniko 拉基础镜像也要凭据,所以只校验时也要写 `/kaniko/.docker/config.json` |
+| 服务仓触发本仓的部署 | 本仓的 job token 入站白名单里要有那个服务项目 |
+| `needs` 依赖手动任务 | 该手动任务不能是 `allow_failure: true`,否则下游任务不会被创建 |
 
 ## 需要别人权限的事
 

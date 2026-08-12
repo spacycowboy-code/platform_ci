@@ -2,10 +2,6 @@
 
 服务仓维护者只需要这一份。
 
-> 本文描述的是已对齐的目标状态。截至最后一次修改,`deploy-test` / `deploy-prod` 两个按钮尚未
-> 加进模板(见 [MAINTAINING.md](MAINTAINING.md) 末尾的"待实现")。在那之前发布方式仍是手工改
-> 环境描述里的镜像标签。
-
 ## 三件事
 
 **上生产**:改动合并到 `main`,在自己仓的流水线里点一下 `deploy-prod`。
@@ -14,7 +10,8 @@
 就换成你这个分支的版本。同时只有一个分支能占用它,谁点谁占,用完不用清理——下一个人点的时候
 就顶掉了。
 
-**回滚**:`git revert` 那次合并,再点一次 `deploy-prod`。
+**回滚**:`git revert` 那次合并,再点一次 `deploy-prod`(会重新构建,约一分钟)。急的时候也可以在
+GitLab 的 Deployments → Environments → prod 里对上一次成功的部署点 Re-deploy,直接换回旧镜像。
 
 生产只可能来自 `main`;测试环境给分支用。除此之外没有别的环境。
 
@@ -46,6 +43,12 @@ include:
 | 提供 `GET /health`,返回 200,不查数据库 | 容器健康检查用它。查数据库的话,探针失败就分不清是服务挂了还是依赖挂了 |
 | 测试依赖写 `requirements-dev.txt` | 流水线有这个文件就装它 |
 | 启动前要跑迁移之类,放 `docker-entrypoint.sh` 在仓库根目录 | 构建时会自动设成容器入口,不用配置 |
+
+## 看现在线上跑的是哪个版本
+
+在部署机上 `cat /proj/rp_ait_prod/services/prod-env/.env`,里面每个服务一行,值就是 commit sha。
+测试环境同理,目录换成 `test-env`。GitLab 的 Environments 页面另有一份部署历史(谁、什么时候、
+哪个版本)。
 
 ## 端口、环境变量、挂载目录在哪改
 
