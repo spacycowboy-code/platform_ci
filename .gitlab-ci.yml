@@ -20,21 +20,37 @@ check-templates:
     - |
       python - <<'PY'
       import pathlib, sys, yaml
+
+      # GitLab 的自定义标签,本地解析时当成占位值。
+      yaml.SafeLoader.add_multi_constructor("!reference", lambda loader, suffix, node: None)
+
       bad = 0
       for p in sorted(pathlib.Path("templates").glob("*.yml")):
-          head, _, body = p.read_text(encoding="utf-8").partition("\n---\n")
+          text = p.read_text(encoding="utf-8")
+          head, sep, body = text.partition("\n---\n")
           try:
-              spec = yaml.safe_load(head)
-              jobs = yaml.safe_load(body)
+              # 没有 --- 的是共享片段(只定义以 . 开头的隐藏任务),整份就是 body。
+              spec = yaml.safe_load(head) if sep else None
+              jobs = yaml.safe_load(body if sep else text) or {}
           except Exception as exc:
-              print(f"{p}: 解析失败 {exc}"); bad = 1; continue
+              print(f"{p}: 解析失败 {exc}")
+              bad = 1
+              continue
+          skip = ("default", "stages", "variables", "cache", "workflow", "include")
+          names = [k for k in jobs if k not in skip]
+          if not sep:
+              hidden = [k for k in names if k.startswith(".")]
+              if hidden != names:
+                  print(f"{p}: 共享片段只应定义隐藏任务,实际 {names}")
+                  bad = 1
+              else:
+                  print(f"{p}: 共享片段,提供 {hidden}")
+              continue
           inputs = ((spec or {}).get("spec") or {}).get("inputs") or {}
           required = [k for k, v in inputs.items() if not isinstance(v, dict) or "default" not in v]
-          print(f"{p}: 输入 {len(inputs)} 个(必填 {len(required)}: {required}),"
-                f"任务 {[k for k in jobs if k not in ('default','stages','variables','cache','workflow')]}")
+          print(f"{p}: 输入 {len(inputs)} 个(必填 {len(required)}: {required}),任务 {names}")
       sys.exit(bad)
       PY
-    # Dockerfile 至少要能被 docker 解析:交给下一阶段的实际构建验证。
 
 publish-base:
   stage: publish
