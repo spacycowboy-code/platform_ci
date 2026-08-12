@@ -96,6 +96,6 @@ SkyWalking;`email-agent` 只有一个 `.gitlab-ci.yml`,include 组内模板仓�
 | 事项 | 卡在哪 |
 |---|---|
 | 生产审计后端的推送密钥仍从旧部署目录挂载 | 私钥 `600 ezhgmio`,目录属 `ezhgmio:erpait`。终态是像其它环境密钥一样投放,需要密钥所有者移动或换一把 |
-| 仓库里两个 `infra-probe` 镜像 | 推送账号无删除权限 |
+| 仓库里的一次性标签 | 推送账号无删除权限(DELETE 403)。目前有两个 `infra-probe` 探测镜像,以及 `product-structure-information` 的 `ab4b52c4`、`22f64a72` 两个验证用标签。这也是 MR 流水线不推镜像的原因 |
 | `agent-artifex` 是否启动 | 生产上已停;启动属于功能决定 |
 | `services/test-env` 空目录 | 由部署任务以 `ezhgmio` 身份创建,已无引用 |
