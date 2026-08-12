@@ -85,6 +85,17 @@ build:
         $DEST \
         --snapshot-mode=redo --single-snapshot
     - echo "推送完成:$IMAGE:$TAG"
+    - |
+      if [ "${PUSH_IMAGE:-false}" = "true" ]; then
+        echo "================ 怎么发布这个产物 ================"
+        echo "把环境描述里对应服务的 image 改成下面这一行:"
+        echo
+        echo "    image: $IMAGE:$TAG"
+        echo
+        echo "验收(改完自动部署): $CI_SERVER_URL/rp-ai-miao/platform-ci/-/edit/main/deploy/staging-audit/compose.yml"
+        echo "生产(改完还要手动触发 deploy-prod): $CI_SERVER_URL/rp-ai-miao/platform-ci/-/edit/main/deploy/prod/compose.yml"
+        echo "=================================================="
+      fi
   rules:
     # main:产出发布用的镜像。
     - if: '$CI_COMMIT_BRANCH == "main"'

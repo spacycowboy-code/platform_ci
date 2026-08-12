@@ -45,6 +45,8 @@ include:
            --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
            --snapshot-mode=redo --single-snapshot; then
         echo "推送完成:$IMAGE:$TAG"
+        echo "发布:把环境描述里对应服务的 image 改成 $IMAGE:$TAG"
+        echo "  $CI_SERVER_URL/rp-ai-miao/platform-ci/-/edit/main/deploy/staging-audit/compose.yml"
       else
         echo "构建失败。若失败原因是访问外网(例如安装第三方 CLI),说明该镜像不能在 runner 上构建。"
         exit 1

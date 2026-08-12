@@ -33,6 +33,10 @@ spec:
   variables:
     ENV_DIR: "deploy/$[[ inputs.env ]]"
     HOST_DIR: "$[[ inputs.dir ]]"
+  # 登记到 GitLab 的 Environments:每次部署谁在什么时候部了哪个 commit 都有记录,
+  # 界面上还能直接重新部署。之前这些只在作业日志里。
+  environment:
+    name: $[[ inputs.env ]]
   before_script:
     - apk add --no-cache openssh-client rsync
   script:
