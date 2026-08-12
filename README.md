@@ -44,19 +44,8 @@ include:
 合并到 `main` 后流水线推出 `proj-rvc/rp-ai/<service>:<commit sha>`,日志末尾打印完整标签。
 同一个 commit 重跑不会覆盖已有标签。
 
-发布分两步:
-
-1. 取该标签的 digest。
-
-   ```bash
-   curl -sI -u "$user:$token" \
-     -H "Accept: application/vnd.oci.image.manifest.v1+json" \
-     https://armdocker.rnd.ericsson.se/v2/proj-rvc/rp-ai/<service>/manifests/<sha> \
-     | grep -i docker-content-digest
-   ```
-
-2. 在 `deploy/<env>/compose.yml` 把镜像改成 `<repo>:<sha>@sha256:<digest>`,合并,触发该
-   环境的部署任务。
+发布:在 `deploy/<env>/compose.yml` 把镜像那一行的标签改成新的 commit sha,合并,触发该环境
+的部署任务。部署日志末尾打印本次实际运行的镜像与 image id,作为这次部署的记录。
 
 回滚是 revert 那次提交再触发一次,不重新构建。
 

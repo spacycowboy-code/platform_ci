@@ -70,6 +70,11 @@ spec:
         docker compose pull
         docker compose up -d --remove-orphans
         docker compose ps
+        echo '--- 本次实际运行的镜像 ---'
+        # \$( ) 与 \$c 转义,让它们在目标机上展开而不是在 runner 上。
+        for c in \$(docker compose ps -q); do
+          docker inspect \$c --format '{{.Name}} {{.Config.Image}} {{.Image}}'
+        done
       "
   rules:
     # 该环境的描述变了就触发(自动环境自动跑,手动环境出按钮)。
