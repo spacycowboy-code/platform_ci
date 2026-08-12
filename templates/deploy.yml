@@ -13,6 +13,9 @@ apply:
     - if: '$DEPLOY_ENV'
   environment:
     name: $DEPLOY_ENV
+  variables:
+    # 需要完整克隆:CI 默认浅克隆(depth 20),从浅克隆推送会被服务端拒绝。
+    GIT_DEPTH: "0"
   before_script:
     - apk add --no-cache openssh-client rsync git
   script:
@@ -41,12 +44,17 @@ apply:
       else
         git add "$ENV_DIR/compose.yml"
         git commit -qm "$DEPLOY_ENV: $DEPLOY_SERVICE -> $DEPLOY_TAG"
+        ok=0
         for i in 1 2 3; do
-          if git push -o ci.skip "https://oauth2:${PLATFORM_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:main" 2>/dev/null; then
-            echo "已记录到 main"; break
+          if git push -o ci.skip "https://oauth2:${PLATFORM_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:main"; then
+            echo "已记录到 main: $DEPLOY_ENV $DEPLOY_SERVICE -> $DEPLOY_TAG"
+            ok=1; break
           fi
-          git fetch -q origin main && git rebase -q origin/main || exit 1
+          echo "第 $i 次推送失败,同步后重试"
+          git fetch origin main && git rebase origin/main || exit 1
         done
+        # 推不上去就失败:否则会出现"部署了但描述没更新",而描述是判断线上跑什么的依据。
+        [ "$ok" = "1" ] || { echo "无法把标签写回 main"; exit 1; }
       fi
     - |
       mkdir -p ~/.ssh && chmod 700 ~/.ssh
