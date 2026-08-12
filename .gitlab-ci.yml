@@ -86,6 +86,9 @@ include:
       env: prod
       dir: /proj/rp_ait_prod/services/prod-env
       when: manual
+      # 同一次改动如果也改了验收环境,必须等验收部署成功才允许部生产。
+      # 只改生产描述时验收任务不存在,optional 让它不阻塞。
+      after_env: staging-audit
       env_files: "product-structure-information.env=PSI_PROD_ENV ai-portal-be.env=AUDIT_PROD_ENV grafana.env=GRAFANA_PROD_ENV"
   - local: templates/deploy-env.yml
     inputs:
