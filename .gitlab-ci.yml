@@ -57,8 +57,7 @@ publish-base:
         --destination "$BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
         --snapshot-mode=redo --single-snapshot
     - echo "已发布 $BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
-    # 不再发 <pyver>-latest:没有消费者该用浮动标签,而它的存在正好让"同一份源码
-    # 构出不同产物"这种错误有机可乘——本项目已经踩过一次(见 DESIGN.md)。
+    # 只发固定标签,不发 <pyver>-latest:浮动的基础镜像会让同一份源码构出不同产物。
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes: [docker/Dockerfile.base, .gitlab-ci.yml]
