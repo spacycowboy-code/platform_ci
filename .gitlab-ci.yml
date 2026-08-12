@@ -91,5 +91,7 @@ include:
     inputs:
       env: staging-audit
       dir: /proj/rp_ait_prod/services/staging-audit-env
-      when: manual
+      # 验收环境自动部署:改了它的描述就应用。当初设成手动是为了首次切换时控制端口让位的
+      # 顺序,那一步已经完成。生产保持手动。
+      when: on_success
       env_files: "audit-staging.env=AUDIT_STAGING_ENV"
