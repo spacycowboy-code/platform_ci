@@ -222,7 +222,6 @@ deploy-test:
     PUSH_IMAGE: "true"
   rules:
     - when: manual
-      allow_failure: true
   environment:
     name: test
 
@@ -246,7 +245,6 @@ deploy-prod:
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-      allow_failure: true
   environment:
     name: prod
 
