@@ -105,7 +105,9 @@ test:
 
 .kaniko:
   image:
-    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug
+    # 锁 digest:GoogleContainerTools/kaniko 已归档,不会再有新版本;锁内容避免代理里的 tag
+    # 被换掉。替代路径见 MAINTAINING.md 的约束表。
+    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug@sha256:c3109d5926a997b100c4343944e06c6b30a6804b2f9abe0994d3de6ef92b028e
     entrypoint: [""]
   before_script:
     # 拉私有基础镜像也需要凭据,所以不论是否推送都要写。
