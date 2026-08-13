@@ -58,7 +58,7 @@
 | 约束 | 结果 |
 |---|---|
 | runner 不允许特权容器 | 用 kaniko;dind 报 `mount: permission denied` |
-| kaniko 已归档 | 首选替代 BuildKit rootless 在本 runner 跑不起来(宿主机 `unprivileged_userns_clone=0`,且该机由别人维护);Chainguard fork 在公开目录里没有(`cgr.dev/chainguard/kaniko` 404)。当前锁 digest,等自有机器上直接用 rootless |
+| kaniko 已归档 | 四条替代路径都验过,今天没有一条既落地又不付代价:①BuildKit rootless(正解)在本 runner 跑不起来——宿主机 `unprivileged_userns_clone=0`,rootlesskit 报 `operation not permitted`,该机由别人维护;②Chainguard fork 不在公开目录(`cgr.dev/chainguard/kaniko` 404),要自己编译并自行维护;③请 Artifactory 加代理无用——代理不到不存在的镜像;④buildx 驱动自有机器实测失败:`DEPLOY_SSH_KEY` 是受保护变量,要让分支也能构建就得把部署机私钥开放给任意分支,暴露面从"镜像仓库凭据"扩大到"部署机命令执行"。**当前决定**:留在 `v1.23.2` 并锁 digest;**触发条件**:新集群(自有机器)可用后改用 BuildKit rootless |
 | 项目级与组级都要求 GPG 签名提交 | CI 不能提交 git,所以版本记在部署机 `.env`,不写回仓库 |
 | runner 拉私有命名空间镜像 | 组级 `DOCKER_AUTH_CONFIG`;kaniko 拉基础镜像也要凭据,所以只校验时也要写 `/kaniko/.docker/config.json` |
 | 跨项目触发 | 本仓 job token 入站白名单里要有那个服务项目 |
