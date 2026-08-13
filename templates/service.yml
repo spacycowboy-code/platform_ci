@@ -103,24 +103,34 @@ test:
 
 # ---------- 构建 ----------
 
-.kaniko:
-  image:
-    # 锁 digest:GoogleContainerTools/kaniko 已归档,不会再有新版本;锁内容避免代理里的 tag
-    # 被换掉。替代路径见 MAINTAINING.md 的约束表。
-    name: $REGISTRY/gcr-ericsson-remote/kaniko-project/executor:v1.23.2-debug@sha256:c3109d5926a997b100c4343944e06c6b30a6804b2f9abe0994d3de6ef92b028e
-    entrypoint: [""]
+# 构建在我们自己机器上的 Docker 引擎里进行(CI 通过 SSH 驱动它)。
+# 为什么不是 kaniko:GoogleContainerTools/kaniko 已归档。为什么不是 BuildKit rootless:
+# 本组 runner 的宿主机禁了非特权用户命名空间,而那台机器不由我们维护。
+# 源码不落在构建机上——buildx 通过 SSH 隧道把构建上下文传给远端引擎,构建完即释放。
+.builder:
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:cli
   before_script:
-    # 拉私有基础镜像也需要凭据,所以不论是否推送都要写。
+    - apk add --no-cache openssh-client
     - |
-      : "${docker_user:?未设置 — 在组的 CI 变量里配置}"
-      : "${docker_password:?未设置}"
-      mkdir -p /kaniko/.docker
-      printf '{"auths":{"%s":{"auth":"%s"}}}' "$REGISTRY" \
-        "$(printf '%s:%s' "$docker_user" "$docker_password" | base64 | tr -d '\n')" \
-        > /kaniko/.docker/config.json
+      : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
+      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      tr -d '\r' < "$DEPLOY_SSH_KEY" > ~/.ssh/id_build
+      printf '\n' >> ~/.ssh/id_build && chmod 600 ~/.ssh/id_build
+      cat > ~/.ssh/config <<EOF
+      Host builder
+        HostName $DEPLOY_HOST
+        User $DEPLOY_USER
+        IdentityFile ~/.ssh/id_build
+        StrictHostKeyChecking no
+        UserKnownHostsFile /dev/null
+      EOF
+    - export DOCKER_HOST=ssh://builder
+    - echo "构建机 Docker 版本 $(docker version --format '{{.Server.Version}}')"
+    - echo "$docker_password" | docker login "$REGISTRY" -u "$docker_user" --password-stdin >/dev/null
 
 .build:
-  extends: .kaniko
+  extends: .builder
   stage: build
   script:
     - |
@@ -178,35 +188,37 @@ test:
       fi
       grep -v _auth "$CTX/Dockerfile.thin"
     - |
+      export DOCKER_HOST=ssh://builder
       # 标签含 commit,已存在就不再构建。
-      if [ "${PUSH_IMAGE:-false}" = "true" ] && crane manifest "$IMAGE:$TAG" >/dev/null 2>&1; then
+      if [ "${PUSH_IMAGE:-false}" = "true" ] && docker buildx imagetools inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
         echo "$IMAGE:$TAG 已存在,跳过构建"
       else
         if [ "${PUSH_IMAGE:-false}" = "true" ]; then
-          DEST="--destination $IMAGE:$TAG"
+          OUT="--push --tag $IMAGE:$TAG"
         else
-          DEST="--no-push"
+          # 只校验:产物丢弃,不推送也不留在构建机上。
+          OUT="--output type=cacheonly"
           echo "只校验构建,不推送"
         fi
-        /kaniko/executor --context "$CTX" --dockerfile "$CTX/Dockerfile.thin" \
+        docker buildx build $OUT \
+          --file "$CTX/Dockerfile.thin" \
           --build-arg "BASE_IMAGE=$BASE_IMAGE" --build-arg "APT_PACKAGES=$APT_PACKAGES" \
           --build-arg "EXTRA_PIP=$EXTRA_PIP" --build-arg "APP_MODULE=$APP_MODULE" \
           --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
           --build-arg "DIST_DIR=$[[ inputs.dist_dir ]]" \
           --build-arg "BUILD_COMMAND=npm run build" \
-          $DEST --snapshot-mode=redo --single-snapshot --skip-unused-stages
+          "$CTX"
       fi
     - |
       # 同一个仓的第二个镜像(配方与薄层实质不同,用仓里自带的 Dockerfile)。
+      export DOCKER_HOST=ssh://builder
       if [ -n "$EXTRA_DOCKERFILE" ]; then
-        if [ "${PUSH_IMAGE:-false}" = "true" ] && crane manifest "$EXTRA_IMAGE:$TAG" >/dev/null 2>&1; then
+        if [ "${PUSH_IMAGE:-false}" = "true" ] && docker buildx imagetools inspect "$EXTRA_IMAGE:$TAG" >/dev/null 2>&1; then
           echo "$EXTRA_IMAGE:$TAG 已存在,跳过构建"
         else
-          [ "${PUSH_IMAGE:-false}" = "true" ] && DEST2="--destination $EXTRA_IMAGE:$TAG" || DEST2="--no-push"
-          /kaniko/executor --context "$CI_PROJECT_DIR" \
-            --dockerfile "$CI_PROJECT_DIR/$EXTRA_DOCKERFILE" \
-            --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
-            $DEST2 --snapshot-mode=redo --single-snapshot
+          [ "${PUSH_IMAGE:-false}" = "true" ] && OUT2="--push --tag $EXTRA_IMAGE:$TAG" || OUT2="--output type=cacheonly"
+          docker buildx build $OUT2 --file "$CI_PROJECT_DIR/$EXTRA_DOCKERFILE" \
+            --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" "$CI_PROJECT_DIR"
         fi
       fi
 
