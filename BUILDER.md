@@ -47,4 +47,5 @@ rootless 构建器的报错:
 | B 放开 `kernel.unprivileged_userns_clone=1` | runner 宿主机维护者;若属组织加固基线,需走安全例外 | 之后可换成维护中的 BuildKit rootless |
 | C 自己从源码编译 Chainguard fork | 我们 | 半天到一天,此后该工具由我们维护 |
 
-新机器到手后先查 `sysctl -n kernel.unprivileged_userns_clone`。如果同样是 0,B 影响的不止这一台机器。
+新机器(`100.78.224.45`,2026-08-13 查)也是 `0`,同样带 `/etc/sysctl.d/90-disable-unpriv-userns.conf`。
+所以 B 不是"等新机器"能解决的,它是组织加固基线,要走安全例外。
