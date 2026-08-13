@@ -19,6 +19,41 @@ GitLab 的 Deployments → Environments → prod 里对上一次成功的部署�
 镜像在你点部署按钮时才产出并推上去,所以只有真正部署过的版本才有镜像。同一个 commit 第二次
 部署会跳过构建,直接用已有的那个镜像——分支上验过的产物和后来上生产的是同一个。
 
+## 点一下之后发生了什么
+
+五个角色:你的服务仓 → GitLab 流水线 → Artifactory(镜像仓库)→ platform-ci 的流水线 → 部署机。
+
+```
+你的服务仓                                  platform-ci              部署机
+─────────                                  ───────────              ──────
+合并到 main
+   │
+   ├─ 自动:lint / test / build(只验证能不能构建,不推镜像)
+   │
+   └─ 你点 deploy-prod ──构建并推镜像──▶ Artifactory
+             │                        proj-rvc/rp-ai/<服务>:<commit sha>
+             │
+             └─ 自动:apply-prod ──触发下游流水线──▶ apply 任务
+                     (传 环境/服务/版本)              │
+                                                     ├─ 同步 deploy/prod/(只有 compose 与配置,无源码)
+                                                     ├─ 投放密钥文件(来自 CI 的 File 变量)
+                                                     ├─ 改部署机 .env 里这个服务的版本
+                                                     └─ compose pull + up -d ──▶ 只重建这个服务
+```
+
+前端上生产的实际过程:合并后 commit 是 `e70a3471` → 点 `deploy-prod` → 推出
+`rp-ai-portal-fe:e70a3471` → `apply-prod` 触发 platform-ci → 部署机 `.env` 写入
+`RP_AI_PORTAL_FE_TAG=e70a3471` → 只有前端容器被重建,`:9001` 换成新版本。
+
+| 容易困惑的点 | 答案 |
+|---|---|
+| 为什么点完跳到另一个项目的流水线 | 镜像属于"发布",谁在哪台机器跑哪个版本属于"环境"。密钥、端口、卷都在 platform-ci,服务仓里一个都没有 |
+| 为什么一个按钮是两个任务 | `deploy-*` 要用构建镜像来构建,`apply-*` 要触发另一个项目,GitLab 里是两种任务类型,合不了。点第一个,第二个自动跟上 |
+| 镜像存在哪 | Artifactory(`armdocker.rnd.ericsson.se`),不是 GitLab 自带的镜像仓库 |
+| 谁决定重建哪些容器 | `deploy/<环境>/services.txt` 里"镜像名 → compose 服务"的映射;缺映射直接失败 |
+| 线上跑哪个版本记在哪 | 部署机环境目录下的 `.env`,每个服务一行 |
+| 部署机上有源码吗 | 没有。只有 compose、配置文件和投放的密钥;部署只拉镜像,不构建 |
+
 ## 你仓里的那个文件
 
 ```yaml

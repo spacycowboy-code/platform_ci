@@ -80,6 +80,7 @@
 | `deploy/<环境>/services.txt` | 镜像名 → 要重建哪些 compose 服务。部署只 `up -d` 这几个,映射缺失直接失败,不猜 |
 | runner 拉私有命名空间的镜像 | 组级 `DOCKER_AUTH_CONFIG`;kaniko 拉基础镜像也要凭据,所以只校验时也要写 `/kaniko/.docker/config.json` |
 | 服务仓触发本仓的部署 | 本仓的 job token 入站白名单里要有那个服务项目 |
+| 构建器是已归档的 kaniko | GoogleContainerTools/kaniko 已归档(最后一版 v1.24.0)。首选替代 BuildKit rootless 在本组 runner 上跑不起来:宿主机 `kernel.unprivileged_userns_clone=0`,rootlesskit 报 `operation not permitted`,该宿主机由别人维护。Chainguard 的 fork 内网无代理(`cgr.dev` 404)。当前对策:构建镜像锁 digest。替代路径:请 Artifactory 加 `cgr.dev` 远程仓,或在自有机器上跑 buildkitd 作为构建服务 |
 | `needs` 依赖手动任务 | 该手动任务不能是 `allow_failure: true`,否则下游任务不会被创建 |
 
 ## 需要别人权限的事
