@@ -1,21 +1,37 @@
-# 测试环境的 swarm 形态。与同目录的 compose.yml 并存:未搬的服务仍由 compose.yml 在
-# 100.77.162.66 上跑,搬完的在这里。
+# 测试环境的目标状态:全部服务在集群里,对外只有 Traefik,端口沿用用户已经在用的 9101。
+#
+# 与 compose.yml 的关系:达到目标状态后 compose.yml 不再使用(保留一段时间用于回退),
+# 全部验收通过再删。
+#
+# 有状态的三个服务(db / audit-backend / audit-judge)的数据都在 100.77.162.66 的硬盘上
+# (命名卷 + bind mount),所以用放置约束钉在那台机器。它们**不能**与 compose 版本并行运行:
+# 两个 MySQL 挂同一个数据目录会损坏数据。切换必须"先停 compose 再起集群"。
+#
+# depends_on 在 swarm 里无效,服务会并行启动。后端起得比 db 早就会崩,靠 restart_policy 重试
+# 拉起来 —— 这是 swarm 的模型:不保证顺序,只保证最终收敛。
 #
 # 部署:manager 上 `docker stack deploy -c stack.yml --with-registry-auth test`
+
+x-pin-to-old: &pin
+  # 数据在这台机器的硬盘上,副本调度到别处就找不到数据
+  constraints: [node.hostname == node-100-77-162-66]
+
 services:
+  # ---------- 入口 ----------
   traefik:
     image: armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/traefik:v3.5
     command: ["--configFile=/etc/traefik/static.yml"]
     ports:
-      - target: 8080
-        published: 8080
+      # 沿用用户现在就在用的端口:切换后地址一个字都不用变
+      - target: 9101
+        published: 9101
         protocol: tcp
         mode: ingress
     networks: [inner]
     configs:
-      - source: edge_static_v1
+      - source: edge_static_v2
         target: /etc/traefik/static.yml
-      - source: edge_dynamic_v1
+      - source: edge_dynamic_v2
         target: /etc/traefik/dynamic.yml
     deploy:
       replicas: 1
@@ -26,18 +42,18 @@ services:
       update_config:
         order: start-first
 
-  # ---------- 已搬进集群的服务(一律不发布端口)----------
+  # ---------- 无状态,可跨节点 ----------
   frontend:
     image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-e70a3471}
     networks: [inner]
     environment:
-      # 不能再用 host.docker.internal:它只解析到副本所在那台机器,而这些后端只在老机器上。
-      # 这几个地址是环境的事实,写在环境描述里。
-      AUDIT_UPSTREAM: "http://100.77.162.66:9100"
+      # 集群内按服务名;host.docker.internal 只解析到副本所在那台机器,不能用
+      AUDIT_UPSTREAM: "http://audit-backend:8000"
+      # psi 和 grafana 测试环境没有自己的实例,原本就指向生产那一份,这里照原样保留
       PSI_UPSTREAM: "http://100.77.162.66:9010"
       GRAFANA_UPSTREAM: "http://100.77.162.66:9401"
     healthcheck:
-      # 用 127.0.0.1 而不是 localhost:localhost 会解析成 ::1,而 nginx 只听 IPv4(撞过)
+      # 127.0.0.1 而不是 localhost:后者解析成 ::1,而镜像里的 nginx 只监听 IPv4(撞过)
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
@@ -45,22 +61,85 @@ services:
       start_period: 10s
     deploy:
       replicas: 2
-      restart_policy:
-        condition: any
-      update_config:
-        order: start-first
-        failure_action: rollback
-        monitor: 30s
-      rollback_config:
-        order: start-first
+      restart_policy: {condition: any}
+      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
+      rollback_config: {order: start-first}
       resources:
         limits: {cpus: "0.5", memory: 256M}
         reservations: {memory: 64M}
 
+  audit-reconciler:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-effdc635}
+    networks: [inner]
+    env_file: [audit-test.env]
+    deploy:
+      # 无状态,但只需要一个:它是周期性对账,多副本只会重复做同一件事
+      replicas: 1
+      restart_policy: {condition: any}
+      resources:
+        limits: {cpus: "0.5", memory: 512M}
+
+  # ---------- 有状态,钉在老机器 ----------
+  db:
+    image: mysql:8.0
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    networks: [inner]
+    env_file: [audit-test.env]
+    volumes:
+      - db-data:/var/lib/mysql
+    deploy:
+      replicas: 1
+      placement: *pin
+      restart_policy: {condition: any}
+      resources:
+        limits: {memory: 1G}
+
+  audit-backend:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-effdc635}
+    networks: [inner]
+    env_file: [audit-test.env]
+    environment:
+      AUDIT_JUDGE_URL: "http://audit-judge:8790"
+    volumes:
+      # 技能仓工作副本、日志、推送私钥都在这台机器的硬盘上
+      - /home/eniuiqr/audit-data/skillrepo:/data/skillrepo
+      - /home/eniuiqr/audit-data/logs:/app/logs
+      - /home/eniuiqr/audit-data/ssh:/root/.ssh
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 1
+      placement: *pin
+      restart_policy: {condition: any}
+      update_config: {order: stop-first}   # 有 bind mount,不能两个副本同时写
+      resources:
+        limits: {cpus: "2.0", memory: 2G}
+
+  audit-judge:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG:-effdc635}
+    networks: [inner]
+    env_file: [audit-test.env]
+    volumes:
+      # kiro-cli 的登录状态:丢了就所有上传都因判定器不可用而落到人工复核
+      - judge-kiro-home:/root/.kiro
+      - judge-kiro-share:/root/.local/share/kiro-cli
+    deploy:
+      replicas: 1
+      placement: *pin
+      restart_policy: {condition: any}
+      update_config: {order: stop-first}
+      resources:
+        limits: {cpus: "2.0", memory: 4G}
+
 configs:
-  edge_static_v1:
+  edge_static_v2:
     file: ./edge-static.yml
-  edge_dynamic_v1:
+  edge_dynamic_v2:
     file: ./edge-dynamic.yml
 
 networks:
@@ -68,3 +147,15 @@ networks:
     driver: overlay
     driver_opts:
       encrypted: "true"
+
+volumes:
+  # 沿用 compose 建的那几个卷,名字写死:换名等于丢数据
+  judge-kiro-home:
+    external: true
+    name: ai-portal-audit-staging_judge-kiro-home
+  judge-kiro-share:
+    external: true
+    name: ai-portal-audit-staging_judge-kiro-share
+  db-data:
+    external: true
+    name: ai-portal-audit-staging_db-data
