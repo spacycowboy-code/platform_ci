@@ -26,7 +26,8 @@ if [ -n "$EXTRA_VAR" ]; then
 fi
 
 # ---------- 2. 版本必须声明完整 ----------
-# stack.yml 里的版本变量都是必填(没有兜底值)。stack deploy 会重新渲染整个栈,所以任何
+# stack.yml 里的版本变量写成朴素 ${X_TAG}(不带 :? 提示 —— docker 对 :? 里的文字解析不可靠,
+# 曾把提示文字渲染进 config 名字)。所以"必填"由这里保证:缺声明就在动任何东西之前退出。stack deploy 会重新渲染整个栈,所以任何
 # 没声明版本的服务都会让部署失败 —— 这是有意的:以前有兜底值时,漏声明的服务会被静默拉回
 # git 里那个数字。这里在动任何东西之前把缺失的点名报出来。
 missing=""
@@ -60,6 +61,7 @@ cat .env
 EDGE_STATIC_HASH=$(sha256sum edge-static.yml | cut -c1-12)
 EDGE_DYNAMIC_HASH=$(sha256sum edge-dynamic.yml | cut -c1-12)
 export EDGE_STATIC_HASH EDGE_DYNAMIC_HASH
+[ -n "$EDGE_STATIC_HASH" ] && [ -n "$EDGE_DYNAMIC_HASH" ] || { echo "配置文件哈希算不出来,拒绝部署"; exit 1; }
 echo "配置哈希: static=${EDGE_STATIC_HASH} dynamic=${EDGE_DYNAMIC_HASH}"
 
 # stack deploy 不读 .env(实测:会用 stack.yml 里的值),所以先 source 进环境
