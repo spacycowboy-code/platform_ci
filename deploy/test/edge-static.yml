@@ -1,0 +1,15 @@
+# 测试环境的入口。与生产同一份配置形态,只有端口不同(prod 80 / test 8080)——
+# 同一个集群里 ingress 模式不允许两个服务发布同一个端口,拿到 DNS 名之后可以按域名合成一个。
+#
+# 不用 docker/swarm 服务发现:Traefik v3 的 docker 客户端协商到 API 1.24,Docker 29 最低支持 1.40。
+# 用文件路由的额外好处是不需要挂 docker socket。
+entryPoints:
+  web:
+    address: ":8080"
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+log:
+  level: INFO
+accessLog: {}

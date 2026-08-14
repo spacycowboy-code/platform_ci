@@ -1,0 +1,52 @@
+# 复刻测试前端 nginx 现在的映射,后端先指向老机器上跑着的测试 compose 服务。
+# 服务搬进集群后把对应的 servers 改成服务名(如 http://frontend:80),改完给 stack.yml 里
+# configs 的名字换版本号 —— swarm config 不可变。
+#
+# 注意 psi 和 grafana:测试环境本来就没有自己的实例,前端一直指向生产那一份。这里照原样保留,
+# 不在迁移中改变依赖关系。
+http:
+  routers:
+    psi:
+      rule: "PathPrefix(`/api/product-structure/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [psi-strip, psi-add]
+      service: psi
+    audit:
+      rule: "PathPrefix(`/api/`)"
+      priority: 50
+      entryPoints: [web]
+      service: audit
+    grafana:
+      rule: "PathPrefix(`/grafana/`)"
+      priority: 50
+      entryPoints: [web]
+      service: grafana
+    fe:
+      rule: "PathPrefix(`/`)"
+      priority: 1
+      entryPoints: [web]
+      service: fe
+
+  middlewares:
+    psi-strip:
+      stripPrefix:
+        prefixes: ["/api/product-structure"]
+    psi-add:
+      addPrefix:
+        prefix: "/api"
+
+  services:
+    fe:
+      loadBalancer:
+        servers: [{url: "http://100.77.162.66:9101"}]
+    audit:
+      loadBalancer:
+        servers: [{url: "http://100.77.162.66:9100"}]
+    psi:
+      loadBalancer:
+        # 测试环境没有自己的 psi,原本就指生产那一份(现在生产的 psi 已在集群里)
+        servers: [{url: "http://100.77.162.66:9010"}]
+    grafana:
+      loadBalancer:
+        servers: [{url: "http://100.77.162.66:9401"}]
