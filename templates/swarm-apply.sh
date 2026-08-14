@@ -15,6 +15,8 @@ TAG="$3"
 EXTRA_VAR="${4:-}"
 
 cd "$(dirname "$0")"
+# 目录权限自己兜住:同环境的密钥就在这里,不能让同机其它用户读到
+chmod 750 . 2>/dev/null || true
 
 # ---------- 1. 记下本次要部署的版本 ----------
 touch .env
@@ -80,7 +82,9 @@ used=$(docker stack services "$ENV_NAME" -q \
        | xargs -r -n1 docker service inspect \
          --format '{{range .Spec.TaskTemplate.ContainerSpec.Configs}}{{.ConfigName}} {{end}}' \
        | tr ' ' '\n' | sed '/^$/d' | sort -u)
-for c in $(docker config ls --format '{{.Name}}' | grep -E '^edge_(static|dynamic)_' || true); do
+# 两种前缀都要覆盖:早期手工版本号命名带 stack 自动前缀(test_edge_static_v1),
+# 现在显式 name: 命名不带前缀(edge_static_<hash>)。
+for c in $(docker config ls --format '{{.Name}}' | grep -E "^(${ENV_NAME}_)?edge_(static|dynamic)_" || true); do
   if ! echo "$used" | grep -qx "$c"; then
     docker config rm "$c" >/dev/null 2>&1 && echo "清理不再引用的 config: $c"
   fi
