@@ -21,14 +21,15 @@ services:
         mode: ingress
     networks: [inner]
     configs:
-      - source: edge_static_v1
+      - source: edge_static
         target: /etc/traefik/static.yml
-      - source: edge_dynamic_v2
+      - source: edge_dynamic
         target: /etc/traefik/dynamic.yml
     deploy:
       replicas: 1
-      placement:
-        constraints: [node.role == manager]
+      # 不再限制在 manager:那个约束当初是为了读 docker socket 才加的,改用文件路由后
+      # 已不需要,而钉在唯一 manager 上会让 manager 故障直接带走整个入口。
+      # ingress 模式下入口端口在所有节点都监听,所以 Traefik 落在哪台都能对外服务。
       restart_policy:
         condition: any
       update_config:
@@ -36,7 +37,7 @@ services:
 
   # ---------- 已搬进集群的服务(一律不发布端口)----------
   psi:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-71a0ba5a}
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:?未在本环境的 .env 里声明版本}
     env_file:
       # 文件名与 env-files.txt 里的目标名一致,由部署任务投放
       - product-structure-information.env

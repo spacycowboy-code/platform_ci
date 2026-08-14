@@ -1,4 +1,11 @@
-# 镜像名 -> 本环境里要重建哪些 compose 服务。
-rp-ai-portal-be: audit-backend audit-reconciler
-skill-audit-judge: audit-judge
-rp-ai-portal-fe: frontend
+# 镜像名: <模式> [compose 服务名…]
+#
+# 模式是必填的第一个词,它是"部署这个镜像在这个环境里意味着什么"的唯一权威 ——
+# 不靠"stack.yml 里有没有它"来推断:迁移期间一个服务本来就同时出现在两个文件里,
+# 任何推断都必然歧义。
+#   swarm    → 在 manager 上 stack deploy(整个栈按期望状态收敛)
+#   compose  → 在单机上只重建后面列出的那些 compose 服务
+rp-ai-portal-be: swarm
+skill-audit-judge: swarm
+rp-ai-portal-fe: swarm
+traefik: swarm

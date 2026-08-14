@@ -26,15 +26,21 @@ apply:
       : "${DEPLOY_SERVICE:?未传}"; : "${DEPLOY_TAG:?未传}"
       ENV_DIR="deploy/$DEPLOY_ENV"
       VAR="$(echo "$DEPLOY_SERVICE" | tr 'a-z-' 'A-Z_')_TAG"
-      # 这个服务搬到集群了吗:看 stack.yml 里有没有它的版本变量。判据放在环境描述里,
-      # 不在部署任务里 —— 搬迁进度是环境的事实。
-      if [ -f "$ENV_DIR/stack.yml" ] && grep -q "$VAR" "$ENV_DIR/stack.yml"; then
-        MODE=swarm
+      # 部署方式由环境描述里 services.txt 那一行的**第一个词**决定,这是唯一权威。
+      # 不能靠"stack.yml 里有没有它"推断:迁移期间一个服务本来就同时出现在两个文件里,
+      # 任何推断都必然歧义(曾因此埋下"下一次发版静默切集群"的地雷)。
+      LINE="$(sed -n "s/^$DEPLOY_SERVICE:[[:space:]]*//p" "$ENV_DIR/services.txt")"
+      [ -n "$LINE" ] || { echo "$ENV_DIR/services.txt 里没有 $DEPLOY_SERVICE 这一行"; exit 1; }
+      MODE="${LINE%% *}"; [ "$MODE" = "$LINE" ] && TARGETS="" || TARGETS="${LINE#* }"
+      case "$MODE" in
+        swarm|compose) ;;
+        *) echo "services.txt 里 $DEPLOY_SERVICE 的模式是 '$MODE',只能是 swarm 或 compose"; exit 1 ;;
+      esac
+      if [ "$MODE" = swarm ]; then
         : "${SWARM_HOST:?未设置}"; : "${SWARM_USER:?未设置}"
         TARGET_HOST="$SWARM_HOST"; TARGET_USER="$SWARM_USER"; KEY_SRC="$SWARM_SSH_KEY"
         HOST_DIR="/opt/rp-ai/$DEPLOY_ENV"   # 父目录由主机一次性准备(属主=部署用户);/opt 本身不可写
-      elif [ -f "$ENV_DIR/compose.yml" ]; then
-        MODE=compose
+      else
         : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
         TARGET_HOST="$DEPLOY_HOST"; TARGET_USER="$DEPLOY_USER"; KEY_SRC="$DEPLOY_SSH_KEY"
         case "$DEPLOY_ENV" in
@@ -42,9 +48,8 @@ apply:
           prod) HOST_DIR=/proj/rp_ait_prod/services/prod-env ;;
           *) echo "未知环境 $DEPLOY_ENV"; exit 1 ;;
         esac
-      else
-        echo "$ENV_DIR 里既没有 stack.yml 也没有 compose.yml"; exit 1
       fi
+      test -f "$ENV_DIR/${MODE}.yml" || { echo "$ENV_DIR/${MODE}.yml 不存在"; exit 1; }
       echo "部署方式=$MODE 目标目录=$HOST_DIR"
     # 版本不写进 git:本实例的推送规则要求 GPG 签名,CI 无法签名提交。改为写机器上环境目录里的
     # .env。它是**声明的期望版本**;swarm 下**生效状态**的真相是集群本身(stack deploy 会把 tag
@@ -55,7 +60,7 @@ apply:
       printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
       ssh-keygen -y -P "" -f ~/.ssh/id_deploy >/dev/null || { echo "私钥不可解析"; exit 1; }
     - 'SSHBASE="-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"'
-    - 'ssh $SSHBASE "$TARGET_USER@$TARGET_HOST" "mkdir -p $HOST_DIR"'
+    - 'ssh $SSHBASE "$TARGET_USER@$TARGET_HOST" "mkdir -p $HOST_DIR && chmod 750 $HOST_DIR"'
     # 排除 .env:它记录本环境当前各服务的版本,由部署任务维护,不在 git 里。
     - 'rsync -az --delete --exclude ".env" --exclude "*.env" -e "ssh $SSHBASE" "$ENV_DIR/" "$TARGET_USER@$TARGET_HOST:$HOST_DIR/"'
     # 密钥在 rsync --delete 之后投放,否则会被同步删掉。
@@ -93,11 +98,40 @@ apply:
           sort -o .env .env
           echo '--- 本环境声明的版本(.env) ---'
           cat .env
-          # stack deploy 不读 .env(实测:会用 stack.yml 里的兜底值),所以先 source 进环境。
+          # stack.yml 里所有版本变量都是必填(没有兜底值),漏一个就必须在动任何东西之前
+          # 点名失败。第一次把某个服务纳入本环境时,它还没有声明版本 —— 从集群现状补齐一次
+          # 并记一行日志,之后 .env 就是权威。
+          MISSING=''
+          for v in \$(grep -oE '\\\$\\{[A-Z_]+_TAG' stack.yml | sed 's/.*{//' | sort -u); do
+            grep -q \"^\$v=\" .env && continue
+            img=\$(echo \"\$v\" | sed 's/_TAG\$//' | tr 'A-Z_' 'a-z-')
+            cur=\$(docker stack services '$DEPLOY_ENV' --format '{{.Image}}' 2>/dev/null \
+                   | grep \"/\$img:\" | head -1 | sed 's/.*://; s/@.*//')
+            if [ -n \"\$cur\" ]; then
+              echo \"\$v=\$cur\" >> .env
+              echo \"注意:\$v 原先没有声明,已按集群现状补为 \$cur\"
+            else
+              MISSING=\"\$MISSING \$v\"
+            fi
+          done
+          if [ -n \"\$MISSING\" ]; then
+            echo \"以下服务在本环境没有声明版本,且集群里也没有在跑,请先分别部署它们一次:\$MISSING\"
+            exit 1
+          fi
+          sort -o .env .env
+          # config 对象名 = 内容哈希,内容一变名字就变,不需要人维护版本号
+          export EDGE_STATIC_HASH=\$(sha256sum edge-static.yml | cut -c1-12)
+          export EDGE_DYNAMIC_HASH=\$(sha256sum edge-dynamic.yml | cut -c1-12)
           set -a; . ./.env; set +a
           # --with-registry-auth 必需:少了它,本地没缓存该镜像的节点会一直 Rejected: No such image。
           # --prune:stack.yml 是期望状态,文件里删掉的服务就该下线。
           docker stack deploy -c stack.yml --with-registry-auth --prune --detach=false '$DEPLOY_ENV'
+          # --prune 不清理 config 对象,内容哈希命名下它们会累积。删掉本环境不再被引用的。
+          used=\$(docker stack services '$DEPLOY_ENV' -q | xargs -r -n1 docker service inspect \
+                  --format '{{range .Spec.TaskTemplate.ContainerSpec.Configs}}{{.ConfigName}} {{end}}' | tr ' ' '\\n' | sort -u)
+          for c in \$(docker config ls --format '{{.Name}}' | grep -E '^edge_(static|dynamic)_'); do
+            echo \"\$used\" | grep -qx \"\$c\" || { docker config rm \"\$c\" >/dev/null 2>&1 && echo \"清理旧 config \$c\"; }
+          done
           echo '--- 集群里生效的镜像(带 digest,这才是运行态的真相)---'
           for svc in \$(docker stack services '$DEPLOY_ENV' --format '{{.Name}}'); do
             docker service inspect \$svc --format '{{.Spec.Name}} {{.Spec.TaskTemplate.ContainerSpec.Image}}'
@@ -107,12 +141,12 @@ apply:
         exit 0
       fi
       # ---------- 以下是 compose(单机)形态 ----------
-      # 本次要重建哪些 compose 服务,由环境描述里的 services.txt 决定,不由部署任务猜。
-      TARGETS="$(sed -n "s/^$DEPLOY_SERVICE:[[:space:]]*//p" "$ENV_DIR/services.txt")"
+      # 要重建哪些 compose 服务,来自 services.txt 那一行模式之后的部分。
       if [ -n "$DEPLOY_EXTRA_SERVICE" ]; then
-        TARGETS="$TARGETS $(sed -n "s/^$DEPLOY_EXTRA_SERVICE:[[:space:]]*//p" "$ENV_DIR/services.txt")"
+        EL="$(sed -n "s/^$DEPLOY_EXTRA_SERVICE:[[:space:]]*//p" "$ENV_DIR/services.txt")"
+        TARGETS="$TARGETS ${EL#* }"
       fi
-      [ -n "$TARGETS" ] || { echo "$ENV_DIR/services.txt 里没有 $DEPLOY_SERVICE 的映射"; exit 1; }
+      [ -n "$TARGETS" ] || { echo "services.txt 里 $DEPLOY_SERVICE 是 compose 模式但没列出要重建的服务"; exit 1; }
       echo "本次只重建: $TARGETS"
       EXTRA_VAR=""
       [ -n "$DEPLOY_EXTRA_SERVICE" ] && EXTRA_VAR="$(echo "$DEPLOY_EXTRA_SERVICE" | tr 'a-z-' 'A-Z_')_TAG"

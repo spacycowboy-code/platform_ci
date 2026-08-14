@@ -1,8 +1,17 @@
-# 镜像名 -> 本环境里要重建哪些 compose 服务。部署只作用于这里列出的服务,其它容器不动。
-product-structure-information: product-structure-information
-rtep-flow-manager: rtep-flow-manager
-agent-artifex: agent-artifex
-rp-ai-portal-be: audit-backend audit-reconciler
-skill-audit-judge: audit-judge
-rp-ai-portal-fe: frontend
-eridoc-client: eridoc-client
+# 镜像名: <模式> [compose 服务名…]
+#
+# 模式是必填的第一个词,它是"部署这个镜像在这个环境里意味着什么"的唯一权威 ——
+# 不靠"stack.yml 里有没有它"来推断:迁移期间一个服务本来就同时出现在两个文件里,
+# 任何推断都必然歧义。
+#   swarm    → 在 manager 上 stack deploy
+#   compose  → 在单机上只重建后面列出的那些 compose 服务
+#
+# 生产目前全部还在单机 compose 上。某个服务真要迁到集群时,把它这一行的模式改成 swarm ——
+# 那一行就是迁移这个决定本身,可评审、可回退。
+product-structure-information: compose product-structure-information
+rtep-flow-manager: compose rtep-flow-manager
+agent-artifex: compose agent-artifex
+rp-ai-portal-be: compose audit-backend audit-reconciler
+skill-audit-judge: compose audit-judge
+rp-ai-portal-fe: compose frontend
+eridoc-client: compose eridoc-client

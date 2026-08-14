@@ -29,14 +29,15 @@ services:
         mode: ingress
     networks: [inner]
     configs:
-      - source: edge_static_v2
+      - source: edge_static
         target: /etc/traefik/static.yml
-      - source: edge_dynamic_v2
+      - source: edge_dynamic
         target: /etc/traefik/dynamic.yml
     deploy:
       replicas: 1
-      placement:
-        constraints: [node.role == manager]
+      # 不再限制在 manager:那个约束当初是为了读 docker socket 才加的,改用文件路由后
+      # 已不需要,而钉在唯一 manager 上会让 manager 故障直接带走整个入口。
+      # ingress 模式下入口端口在所有节点都监听,所以 Traefik 落在哪台都能对外服务。
       restart_policy:
         condition: any
       update_config:
@@ -44,7 +45,7 @@ services:
 
   # ---------- 无状态,可跨节点 ----------
   frontend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-e70a3471}
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:?未在本环境的 .env 里声明版本}
     networks: [inner]
     environment:
       # 集群内按服务名;host.docker.internal 只解析到副本所在那台机器,不能用
@@ -74,7 +75,7 @@ services:
         reservations: {memory: 64M}
 
   audit-reconciler:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-effdc635}
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:?未在本环境的 .env 里声明版本}
     networks: [inner]
     env_file: [audit-test.env]
     deploy:
@@ -90,6 +91,13 @@ services:
     command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
     networks: [inner]
     env_file: [audit-test.env]
+    healthcheck:
+      # compose 里本来有,写 stack 时漏了 —— 没有它,MySQL 挂了也不会被发现
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     volumes:
       - db-data:/var/lib/mysql
     deploy:
@@ -100,7 +108,7 @@ services:
         limits: {memory: 1G}
 
   audit-backend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-effdc635}
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:?未在本环境的 .env 里声明版本}
     networks: [inner]
     env_file: [audit-test.env]
     environment:
@@ -126,7 +134,7 @@ services:
         limits: {cpus: "2.0", memory: 2G}
 
   audit-judge:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG:-effdc635}
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG:?未在本环境的 .env 里声明版本}
     networks: [inner]
     env_file: [audit-test.env]
     volumes:
@@ -142,10 +150,13 @@ services:
         limits: {cpus: "2.0", memory: 4G}
 
 configs:
-  edge_static_v2:
+  # 键名固定;真实对象名由内容哈希决定(见下),避免"忘记改版本号"导致静默不生效
+  edge_static:
     file: ./edge-static.yml
-  edge_dynamic_v2:
+    name: edge_static_${EDGE_STATIC_HASH:?未传 edge-static.yml 的内容哈希}
+  edge_dynamic:
     file: ./edge-dynamic.yml
+    name: edge_dynamic_${EDGE_DYNAMIC_HASH:?未传 edge-dynamic.yml 的内容哈希}
 
 networks:
   inner:
