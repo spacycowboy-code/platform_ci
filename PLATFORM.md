@@ -9,8 +9,12 @@
 | `templates/service.yml` | 服务仓唯一 include 的文件:lint / test / build + 两个部署按钮 |
 | `templates/deploy.yml` | 被按钮触发时执行部署的 `apply` 任务(本仓内部用) |
 | `docker/Dockerfile.base` | 所有 Python 服务的基础镜像配方 |
-| `deploy/<环境>/compose.yml` | 这台机器上跑什么:镜像、端口、卷、env 文件 |
-| `deploy/<环境>/services.txt` | 镜像名 → 要重建哪些 compose 服务;缺映射直接失败 |
+| `templates/swarm-apply.sh` | 在 manager 上执行一次集群部署;**部署逻辑不写在 ssh 的字符串里** |
+| `deploy/<环境>/compose.yml` | 单机形态:这台机器上跑什么 |
+| `deploy/<环境>/stack.yml` | 集群形态:这个环境在集群里跑什么 |
+| `deploy/<环境>/edge-static.yml` | 入口进程的启动配置(监听哪个端口) |
+| `deploy/<环境>/edge-dynamic.yml` | 对外路径 → 服务的映射 |
+| `deploy/<环境>/services.txt` | 镜像名 → **部署方式**(swarm/compose)+ compose 模式下要重建哪些服务。**这是部署方式的唯一权威** |
 | `deploy/<环境>/env-files.txt` | 目标文件名 = CI 变量名,部署时投放 |
 
 ## 环境
@@ -162,6 +166,42 @@ MySQL Router:**6446 是读写口(指向主),6447 是只读口(指向副本)**。
 **在已有 swarm 服务上改发布端口,ingress 映射不会刷新。** 现象最坑:配置是对的、容器内部确实在听、
 `service inspect` 里发布端口也对,但外面连不上,日志没有任何报错。必须 `docker service rm <服务>`
 再 `stack deploy`。
+
+### 部署方式由 services.txt 说了算,不看文件里有什么
+
+`services.txt` 每行第一个词是模式(`swarm` / `compose`),必填。
+
+**为什么不能靠"stack.yml 里有没有这个服务"来判断**:迁移期间一个服务本来就同时出现在
+`compose.yml` 和 `stack.yml` 里,任何这类推断都必然歧义。曾经就是这么写的,结果是:把 psi 写进
+`deploy/prod/stack.yml` 的那一刻,"下一次任何人发一次生产 psi 就会静默拉起一个集群栈、Traefik
+抢占两台机器的 80 端口"——文件提交这个动作预先决定了迁移。
+
+现在迁移一个服务 = 改那一行的一个词,而那一行就是决定本身,可评审、可回退。
+
+### 版本必须声明完整,漏一个就拒绝部署
+
+`stack deploy` 会**重新渲染整个栈**,不像 compose 的 `up -d <服务>` 只碰一个。所以:
+
+* `stack.yml` 里的版本变量不带兜底值。曾经带过,后果是没写进 `.env` 的服务每次部署都被静默拉回
+  git 里那个数字(实测:`.env` 只有前端版本,后端和判定器跑的正好是文件里的默认值)。
+* 完整性由 `swarm-apply.sh` 在动任何东西之前检查:缺哪个点名报出来。某个服务第一次纳入本环境时
+  按集群现状补齐一次并记一行日志,之后 `.env` 就是权威。
+
+### 配置对象按内容哈希命名
+
+swarm 的 config 不可变,所以改配置要换名字。**不要用手工版本号**:改了文件忘改名字,config 不更新
+且不报错(撞过,`_v1`/`_v2` 并存)。现在名字由部署脚本算的内容哈希决定,内容一变名字就变;脚本顺手
+删掉本环境不再被引用的旧对象(`--prune` 不管 config)。
+
+`stack.yml` 里的变量写成朴素 `${VAR}` 而不是 `${VAR:?提示}`:docker 对 `:?` 里的文字解析不可靠,
+实测会把提示文字渲染进 config 的名字。必填性由脚本检查保证。
+
+### 部署逻辑不写在 ssh 的字符串里
+
+同一天因为这件事失败了三次:文件名判断写错、config 名被渲染成一段提示文字、整段转义被写坏。
+几十行 shell 塞进 ssh 的双引号,每个 `$` 和引号都要多层转义,错了还不容易看出来。
+
+集群部署因此改成 `templates/swarm-apply.sh`,apply 只负责上传它并带参数执行。
 
 ### 有状态的服务不能随便调度
 
