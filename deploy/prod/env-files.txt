@@ -1,4 +1,6 @@
-product-structure-information.env=PSI_PROD_ENV
+# 目标文件名=CI 变量名[=形态]。形态省略即 compose(投到单机),swarm 表示投到集群 manager。
+# 密钥只投到真正要用它的机器上:服务还没搬进集群,就不该把它的密钥放到 manager 上。
+product-structure-information.env=PSI_PROD_ENV=swarm
 ai-portal-be.env=AUDIT_PROD_ENV
 grafana.env=GRAFANA_PROD_ENV
 eridoc-client.env=ERIDOC_PROD_ENV

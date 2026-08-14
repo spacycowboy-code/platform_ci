@@ -60,9 +60,14 @@ apply:
     - 'rsync -az --delete --exclude ".env" --exclude "*.env" -e "ssh $SSHBASE" "$ENV_DIR/" "$TARGET_USER@$TARGET_HOST:$HOST_DIR/"'
     # 密钥在 rsync --delete 之后投放,否则会被同步删掉。
     - |
-      ENV_FILES="$(cat "$ENV_DIR/env-files.txt" 2>/dev/null || true)"
-      for pair in $ENV_FILES; do
-        dest="${pair%%=*}"; var="${pair#*=}"
+      # 每行 目标文件名=变量名[=形态]。形态省略即 compose。只投放属于本次目标机器的密钥 ——
+      # 服务还没搬进集群,它的密钥就不该出现在 manager 上。
+      ENV_FILES="$(grep -v '^#' "$ENV_DIR/env-files.txt" 2>/dev/null || true)"
+      for triple in $ENV_FILES; do
+        dest="${triple%%=*}"; rest="${triple#*=}"
+        var="${rest%%=*}"; kind="${rest#*=}"
+        [ "$kind" = "$var" ] && kind=compose
+        [ "$kind" = "$MODE" ] || { echo "跳过 $dest(属于 $kind,本次是 $MODE)"; continue; }
         eval "src=\$$var"
         [ -n "$src" ] && [ -f "$src" ] || { echo "变量 $var 未设置或不是 File 型"; exit 1; }
         scp $SSHBASE "$src" "$TARGET_USER@$TARGET_HOST:$HOST_DIR/$dest"

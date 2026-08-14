@@ -38,7 +38,8 @@ services:
   psi:
     image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-71a0ba5a}
     env_file:
-      - psi.env
+      # 文件名与 env-files.txt 里的目标名一致,由部署任务投放
+      - product-structure-information.env
     networks: [inner]
     healthcheck:
       test: ["CMD", "python", "-c",
