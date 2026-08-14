@@ -32,7 +32,7 @@ apply:
         MODE=swarm
         : "${SWARM_HOST:?未设置}"; : "${SWARM_USER:?未设置}"
         TARGET_HOST="$SWARM_HOST"; TARGET_USER="$SWARM_USER"; KEY_SRC="$SWARM_SSH_KEY"
-        HOST_DIR="/opt/rp-ai-$DEPLOY_ENV"
+        HOST_DIR="/opt/rp-ai/$DEPLOY_ENV"   # 父目录由主机一次性准备(属主=部署用户);/opt 本身不可写
       elif [ -f "$ENV_DIR/compose.yml" ]; then
         MODE=compose
         : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
