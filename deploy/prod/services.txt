@@ -5,3 +5,4 @@ agent-artifex: agent-artifex
 rp-ai-portal-be: audit-backend audit-reconciler
 skill-audit-judge: audit-judge
 rp-ai-portal-fe: frontend
+eridoc-client: eridoc-client

@@ -8,6 +8,28 @@
 # 密钥不在这里:product-structure-information.env 由部署任务从 CI 的 File 变量
 # PSI_PROD_ENV 投放到本目录。
 services:
+  eridoc-client:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/eridoc-client:${ERIDOC_CLIENT_TAG:-not-deployed}
+    container_name: eridoc-client
+    restart: unless-stopped
+    env_file:
+      - eridoc-client.env
+    # 容器内统一 8000;8756 是这台机器上对外的端口,属于环境的事实。
+    ports:
+      - "8756:8000"
+    volumes:
+      # 审计日志(谁读了哪份文档)写在 /app/data/log/<日期>/,是这个服务存在的理由之一,
+      # 必须跨部署保留,所以挂到宿主机而不是留在容器里。
+      - /proj/rp_ait_prod/logs/eridoc-client:/app/data
+    healthcheck:
+      # 本服务的免鉴权健康端点是 /api/health,不是其它服务的 /health。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   product-structure-information:
     image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-925f24b0}
     container_name: product-structure-information

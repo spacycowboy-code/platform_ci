@@ -1,3 +1,4 @@
 product-structure-information.env=PSI_PROD_ENV
 ai-portal-be.env=AUDIT_PROD_ENV
 grafana.env=GRAFANA_PROD_ENV
+eridoc-client.env=ERIDOC_PROD_ENV
