@@ -26,6 +26,37 @@ services:
       update_config:
         order: start-first
 
+  # ---------- 已搬进集群的服务(一律不发布端口)----------
+  frontend:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-e70a3471}
+    networks: [inner]
+    environment:
+      # 不能再用 host.docker.internal:它只解析到副本所在那台机器,而这些后端只在老机器上。
+      # 这几个地址是环境的事实,写在环境描述里。
+      AUDIT_UPSTREAM: "http://100.77.162.66:9100"
+      PSI_UPSTREAM: "http://100.77.162.66:9010"
+      GRAFANA_UPSTREAM: "http://100.77.162.66:9401"
+    healthcheck:
+      # 用 127.0.0.1 而不是 localhost:localhost 会解析成 ::1,而 nginx 只听 IPv4(撞过)
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
+        failure_action: rollback
+        monitor: 30s
+      rollback_config:
+        order: start-first
+      resources:
+        limits: {cpus: "0.5", memory: 256M}
+        reservations: {memory: 64M}
+
 configs:
   edge_static_v1:
     file: ./edge-static.yml

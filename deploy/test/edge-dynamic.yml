@@ -39,7 +39,7 @@ http:
   services:
     fe:
       loadBalancer:
-        servers: [{url: "http://100.77.162.66:9101"}]
+        servers: [{url: "http://frontend:80"}]   # 已搬进集群,按服务名访问
     audit:
       loadBalancer:
         servers: [{url: "http://100.77.162.66:9100"}]
