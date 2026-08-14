@@ -49,7 +49,9 @@ apply:
           *) echo "未知环境 $DEPLOY_ENV"; exit 1 ;;
         esac
       fi
-      test -f "$ENV_DIR/${MODE}.yml" || { echo "$ENV_DIR/${MODE}.yml 不存在"; exit 1; }
+      # swarm 模式读 stack.yml,compose 模式读 compose.yml
+      [ "$MODE" = swarm ] && DESC=stack.yml || DESC=compose.yml
+      test -f "$ENV_DIR/$DESC" || { echo "$MODE 模式需要 $ENV_DIR/$DESC,但它不存在"; exit 1; }
       echo "部署方式=$MODE 目标目录=$HOST_DIR"
     # 版本不写进 git:本实例的推送规则要求 GPG 签名,CI 无法签名提交。改为写机器上环境目录里的
     # .env。它是**声明的期望版本**;swarm 下**生效状态**的真相是集群本身(stack deploy 会把 tag
