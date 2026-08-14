@@ -76,6 +76,41 @@ routing mesh 的语义是:**只要有服务发布了端口,集群里每个节点
 现在这个仲裁者是前端镜像里的 nginx(`/api/product-structure/` → psi 的 `/api/`、`/api/` → 审计
 后端、`/grafana/` → grafana)。换成边缘代理后,这份映射搬到环境描述里,前端只负责静态文件。
 
+### 版本的真相在集群里,不在 `.env`
+
+`stack deploy` 会把 tag 解析成 digest 存进服务定义(实测:`:71a0ba5a@sha256:1e2a2831…`)。所以
+"现在跑的是哪个镜像"由 `docker service inspect` 回答,不再由部署机的 `.env` 回答 —— 版本集合的
+快照要从集群状态抓,抓 `.env` 在 swarm 下取到的不是真相。
+
+### 从 compose 搬到 stack:四个撞过的坑
+
+| 现在的写法 | `stack deploy` 的反应 | 换成 |
+|---|---|---|
+| `profiles: [stopped]`(`agent-artifex` 在用) | **整个部署失败**,不是忽略 | `replicas: 0` |
+| `container_name` | 忽略,容器名变 `<栈>_<服务>.<序号>.<随机>` | 无。按容器名的运维命令要改 |
+| `restart: unless-stopped` | 忽略 | `deploy.restart_policy` |
+| `env_file` | **可用**,变量确实进容器 | 不变 |
+
+另外两条:
+
+* **`--with-registry-auth` 是必需的**。少了它,本地没缓存该镜像的节点会一直
+  `Rejected: No such image` —— 老机器"能起来"只是因为它缓存了生产同一个 tag。
+* **swarm 不会重新平衡已在运行的任务**。副本落在哪台就留在哪台,要 `service update --force`
+  才重新调度。所以"负载均衡"不是部署完自动成立的。
+
+### 搬迁顺序:边缘代理必须最先
+
+compose 世界和 swarm 世界的服务**不能按名字互访**。前端(compose)靠 `host.docker.internal:9010`
+找 psi;psi 一旦搬进 swarm 且不发布端口,前端立刻找不到它,而让它发布 9010 又会和老机器上正在跑的
+psi 撞车(routing mesh)。所以顺序只能是:
+
+1. Traefik 进 swarm 发布 80,路由**先指向现有的 compose 服务**(主机:端口)。不动任何现有容器
+2. 逐个把无状态服务搬进 swarm,同时把那条路由从"主机:端口"改成服务名 —— 用户无感
+3. 最后搬前端;它的 nginx 只剩静态文件,路由全归 Traefik
+
+两套环境都想要 80,而 ingress 模式下同一集群不能重复发布同一端口。在拿到 DNS 名之前:
+**PROD 用 80,TEST 用 8080**;有了域名再按域名合成一个 Traefik。
+
 ### 有状态的服务不能随便调度
 
 判定器的登录卷、技能仓工作副本与推送私钥、grafana 数据都是老机器硬盘上的文件,这些服务必须用
