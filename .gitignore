@@ -1,0 +1,2 @@
+# 环境文件由部署任务从 CI 的 File 变量投放到 stack.yml 同目录,永远不进 git。
+deploy/*/*.env

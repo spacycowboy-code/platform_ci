@@ -1,0 +1,59 @@
+# 对外路径 → 服务。这份映射属于环境:四个服务在代码里的前缀都是 /api/,彼此冲突,
+# 只有把它们放在一起的这一层才知道谁挂哪个对外前缀、要不要改写。
+#
+# 迁移期间两种后端并存:
+#   * 已搬进集群的写服务名(如 psi:8000)
+#   * 未搬的写老机器的 主机:端口
+# 改完这个文件要给 stack.yml 里 configs 的名字换版本号 —— swarm config 不可变。
+http:
+  routers:
+    # 优先级显式给,不依赖"规则越长越优先"这个默认行为
+    psi:
+      rule: "PathPrefix(`/api/product-structure/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [psi-strip, psi-add]
+      service: psi
+    audit:
+      rule: "PathPrefix(`/api/`)"
+      priority: 50
+      entryPoints: [web]
+      service: audit
+    grafana:
+      rule: "PathPrefix(`/grafana/`)"
+      priority: 50
+      entryPoints: [web]
+      service: grafana
+    fe:
+      rule: "PathPrefix(`/`)"
+      priority: 1
+      entryPoints: [web]
+      service: fe
+
+  middlewares:
+    # 复刻原来 nginx 的 `proxy_pass ${PSI}/api/`:
+    # /api/product-structure/vem/x -> psi 的 /api/vem/x(psi 的路由挂在 /api/vem 下)
+    psi-strip:
+      stripPrefix:
+        prefixes: ["/api/product-structure"]
+    psi-add:
+      addPrefix:
+        prefix: "/api"
+
+  services:
+    psi:
+      loadBalancer:
+        # 已在集群里。分流按 TCP 连接发生而不是按请求:顺序调用复用一条连接会落在同一个副本,
+        # 并发才铺开(swarm VIP + IPVS 的固有行为)。
+        servers: [{url: "http://psi:8000"}]
+    audit:
+      loadBalancer:
+        servers: [{url: "http://100.77.162.66:9000"}]
+    grafana:
+      loadBalancer:
+        # 前缀必须保留:grafana 自己的资源链接依赖它,而且它的 GF_SERVER_ROOT_URL
+        # 现在写死成 http://100.77.162.66:9001/grafana/ —— 入口切换时要同步改。
+        servers: [{url: "http://100.77.162.66:9401"}]
+    fe:
+      loadBalancer:
+        servers: [{url: "http://100.77.162.66:9001"}]

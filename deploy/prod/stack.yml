@@ -1,0 +1,75 @@
+# 生产环境的 swarm 形态。与同目录的 compose.yml 并存:搬迁期间未搬的服务仍由 compose.yml
+# 在 100.77.162.66 上跑,搬完的服务在这里。全部搬完后 compose.yml 删除。
+#
+# 一个环境一个 stack:Traefik 也在里面,发布这个环境的入口端口(prod 80 / test 8080),
+# 网络是本 stack 自己的加密 overlay,所以两套环境不共享任何东西。
+#
+# 部署:在 manager 上 `docker stack deploy -c stack.yml --with-registry-auth prod`
+#   * --with-registry-auth 必需:少了它,本地没缓存该镜像的节点会一直 Rejected: No such image
+#   * 改 edge-*.yml 后要给 configs 的名字换一个版本号 —— swarm config 不可变
+#   * env 文件不进 git,由部署任务从 CI 的 File 变量投放到 stack.yml 同目录
+
+services:
+  # ---------- 入口 ----------
+  traefik:
+    image: armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/traefik:v3.5
+    command: ["--configFile=/etc/traefik/static.yml"]
+    ports:
+      - target: 80
+        published: 80
+        protocol: tcp
+        mode: ingress
+    networks: [inner]
+    configs:
+      - source: edge_static_v1
+        target: /etc/traefik/static.yml
+      - source: edge_dynamic_v1
+        target: /etc/traefik/dynamic.yml
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first
+
+  # ---------- 已搬进集群的服务(一律不发布端口)----------
+  psi:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-71a0ba5a}
+    env_file:
+      - psi.env
+    networks: [inner]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: any
+      update_config:
+        order: start-first          # 新副本先起再撤旧的,更新期间无空窗
+        failure_action: rollback    # 起不来就自动回到上一版
+        monitor: 30s
+      rollback_config:
+        order: start-first
+      resources:
+        limits: {cpus: "1.0", memory: 512M}
+        reservations: {memory: 128M}
+
+configs:
+  edge_static_v1:
+    file: ./edge-static.yml
+  edge_dynamic_v1:
+    file: ./edge-dynamic.yml
+
+networks:
+  inner:
+    driver: overlay
+    driver_opts:
+      # 两个节点跨机房,数据面默认明文,所以必须加密
+      encrypted: "true"

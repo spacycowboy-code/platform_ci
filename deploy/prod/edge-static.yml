@@ -1,0 +1,19 @@
+# Traefik 的静态配置(启动时读一次)。
+#
+# 不用 docker/swarm 服务发现:Traefik v3 的 docker 客户端协商到 API 1.24,而 Docker 29 的
+# 最低支持是 1.40,发现器一直报 "client version 1.24 is too old"(DOCKER_API_VERSION 无效,
+# 实测变量在容器里但仍然协商 1.24)。改用文件路由的额外好处是**不需要挂 docker socket**,
+# 少一个等同于 root 的权限面。
+#
+# 代价:加一个服务要在 edge-dynamic.yml 里写一段路由。而服务块本来就写在环境描述里,
+# 所以这是同一份工作,不是额外的。
+entryPoints:
+  web:
+    address: ":80"
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+log:
+  level: INFO
+accessLog: {}
