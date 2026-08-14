@@ -14,6 +14,15 @@ http:
       entryPoints: [web]
       middlewares: [psi-strip, psi-add]
       service: psi
+    # EriDoc 取件工具。必须交给前端容器,不能像其它 /api/ 一样落到 audit:
+    # 这条链路的鉴权(auth_request 用 portal 的登录态换出 signum,再注入
+    # X-Forwarded-User)做在前端 nginx 里,绕过它就等于把 EriDoc 全库对内网敞开。
+    # 优先级要高过下面 /api/ 的 50;前缀改写也由那层 nginx 负责,这里不加中间件。
+    eridoc:
+      rule: "PathPrefix(`/api/eridoc/`)"
+      priority: 100
+      entryPoints: [web]
+      service: fe
     audit:
       rule: "PathPrefix(`/api/`)"
       priority: 50

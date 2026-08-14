@@ -14,9 +14,21 @@ services:
     restart: unless-stopped
     env_file:
       - eridoc-client.env
-    # 容器内统一 8000;8756 是这台机器上对外的端口,属于环境的事实。
-    ports:
-      - "8756:8000"
+    environment:
+      # 身份来自反代注入的 X-Forwarded-User(前端 nginx 用 portal 的登录态换出来的
+      # signum),而不是本服务自己发的 token。写在这里而不是 env 文件里:这不是密钥,
+      # 而且 compose 的 environment 覆盖 env_file,所以以这一行为准。
+      #
+      # 这个模式唯一的安全前提是"本服务只能经那个反代访问",所以下面**不发布端口**:
+      # 只有同一 compose 网络里的 frontend 能连 eridoc-client:8000。一旦把端口放出去,
+      # 任何人自带一个 X-Forwarded-User 就能冒充别人读 EriDoc 全库。
+      ERIDOC_WEB_AUTH_MODE: "proxy"
+      # 浏览器里的下载要整份过一遍内存(前端拿 blob 存盘,见 rp-ai-portal 的
+      # eridoc.service.ts),所以打包上限从默认 2 GiB 收到 50 MB。超限是 413,
+      # 前端把 message 与 stats 原样显示,让人去分批下。
+      ERIDOC_WEB_ZIP_MAX_BYTES: "52428800"
+    # 不发布端口:唯一入口是 portal 前端的 /api/eridoc/(那里做鉴权)。
+    # 8756 曾经直接对外,靠 auth_mode=token 挡;改成 proxy 后必须收回来。
     volumes:
       # 审计日志(谁读了哪份文档)写在 /app/data/log/<日期>/,是这个服务存在的理由之一,
       # 必须跨部署保留,所以挂到宿主机而不是留在容器里。
@@ -186,6 +198,9 @@ services:
       AUDIT_UPSTREAM: "http://host.docker.internal:9000"
       PSI_UPSTREAM: "http://host.docker.internal:9010"
       GRAFANA_UPSTREAM: "http://host.docker.internal:9401"
+      # 走 compose 服务名而不是 host.docker.internal:那个服务不再发布宿主机端口,
+      # 只在这个 compose 项目的网络里可达 —— 这正是它的鉴权模式所要求的。
+      ERIDOC_UPSTREAM: "http://eridoc-client:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

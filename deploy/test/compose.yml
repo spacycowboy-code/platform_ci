@@ -87,6 +87,10 @@ services:
       # 产品结构与 grafana 这台机器上各只有一份,验收环境直接指过去。
       PSI_UPSTREAM: "http://host.docker.internal:9010"
       GRAFANA_UPSTREAM: "http://host.docker.internal:9401"
+      # 这个环境没有 eridoc 实例。变量仍然必须给:前端镜像的 nginx 模板里有一条
+      # proxy_pass ${ERIDOC_UPSTREAM}/api/,未设置会被 envsubst 渲成空串,整份配置非法,
+      # 容器直接起不来。指向 discard 端口,该工具页在这里表现为 502。
+      ERIDOC_UPSTREAM: "http://127.0.0.1:9"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

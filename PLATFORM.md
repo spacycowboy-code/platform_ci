@@ -73,8 +73,15 @@ routing mesh 的语义是:**只要有服务发布了端口,集群里每个节点
 谁挂在哪个对外前缀下、要不要改写前缀,只有把它们放在一起的这一层知道 —— 所以路由规则和端口一样,
 是环境的事实,写在环境描述里,不写在服务仓。
 
-现在这个仲裁者是前端镜像里的 nginx(`/api/product-structure/` → psi 的 `/api/`、`/api/` → 审计
-后端、`/grafana/` → grafana)。换成边缘代理后,这份映射搬到环境描述里,前端只负责静态文件。
+现在这个仲裁者是前端镜像里的 nginx(`/api/product-structure/` → psi 的 `/api/`、
+`/api/eridoc/` → eridoc-client 的 `/api/`、`/api/` → 审计后端、`/grafana/` → grafana)。
+换成边缘代理后,这份映射搬到环境描述里,前端只负责静态文件。
+
+`/api/eridoc/` 这条比别的多一层:那个服务跑 `auth_mode=proxy`,身份来自
+`X-Forwarded-User`,而那个头是这层 nginx 用 `auth_request` 找 portal 后端校验 JWT 后注入的。
+所以它**不能**像其它 `/api/` 那样在边缘直接指向后端 —— 绕过这层就等于把 EriDoc 全库对内网
+敞开,`edge-dynamic.yml` 里那条路由因此指向 fe 并且优先级高于 `/api/`。同理它在
+`compose.yml` 里不发布端口:能连到它的只有这层 nginx。
 
 ### 版本的真相在集群里,不在 `.env`
 
