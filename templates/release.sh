@@ -30,40 +30,51 @@ case "$ACTION" in
     [ "$MODE" = compose ] && DESC=compose.yml
     test -f "$DESC" || { echo "找不到 $DESC" >&2; exit 1; }
 
+    # 先从运行现场收一张 变量名 -> 标签@摘要 的表。
+    # 不能按"变量名推服务名"来查:同一个镜像可能跑成多个服务(后端与对账器就是同一个镜像),
+    # 服务名也不等于镜像名(镜像 rp-ai-portal-fe 跑成服务 frontend)。所以反过来:
+    # 遍历现场的每个服务/容器,读它的镜像,再由镜像名推出变量名。
+    LIVE=$(mktemp)
+    if [ "$MODE" = swarm ]; then
+      # stack services 的 {{.Image}} 不带摘要,service inspect 才带
+      docker stack services "$ENV_NAME" --format '{{.Name}}' 2>/dev/null | while read -r sname; do
+        img="$(docker service inspect "$sname" \
+               --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' 2>/dev/null || true)"
+        [ -n "$img" ] && printf '%s %s\n' "$(var_of_image "$img")" "$img"
+      done > "$LIVE"
+    else
+      docker compose ps -q 2>/dev/null | while read -r c; do
+        img="$(docker inspect "$c" --format '{{.Config.Image}}' 2>/dev/null || true)"
+        [ -n "$img" ] || continue
+        dg="$(docker inspect "$c" --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' 2>/dev/null || true)"
+        [ -n "$dg" ] && img="${img}@${dg##*@}"
+        printf '%s %s\n' "$(var_of_image "$img")" "$img"
+      done > "$LIVE"
+    fi
+
     echo "# 版本集合  环境=$ENV_NAME  形态=$MODE  采集=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo "# 每行一个服务的版本;# 后面是当时实际跑的镜像摘要,重放时用来核对拿到的是不是同一个镜像。"
 
     # 以描述文件里声明的版本变量为准,第三方镜像(traefik/mysql/grafana)在描述里写死,不进版本集合
     for v in $(grep -oE '\$\{[A-Z_]+_TAG' "$DESC" | sed 's/.*{//' | sort -u); do
       declared="$(sed -n "s/^${v}=//p" .env 2>/dev/null | tail -1)"
-      svc="$(echo "$v" | sed 's/_TAG$//' | tr 'A-Z_' 'a-z-')"
-      if [ "$MODE" = swarm ]; then
-        img="$(docker stack services "$ENV_NAME" --format '{{.Image}}' 2>/dev/null \
-               | grep "/${svc}:" | head -1)"
-      else
-        cid="$(docker compose ps -q 2>/dev/null | while read -r c; do
-                 di="$(docker inspect "$c" --format '{{.Config.Image}}' 2>/dev/null || true)"
-                 case "$di" in */${svc}:*) echo "$c"; break ;; esac
-               done)"
-        if [ -n "$cid" ]; then
-          img="$(docker inspect "$cid" --format '{{.Config.Image}}' 2>/dev/null)"
-          dg="$(docker inspect "$cid" --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' 2>/dev/null || true)"
-          [ -n "$dg" ] && img="${img}@${dg##*@}"
-        else
-          img=""
-        fi
-      fi
-      live_tag="${img##*:}"; live_tag="${live_tag%@*}"
-      digest="${img##*@}"; [ "$digest" = "$img" ] && digest="(取不到摘要)"
+      img="$(awk -v k="$v" '$1==k {print $2; exit}' "$LIVE")"
       if [ -z "$img" ]; then
         echo "${v}=${declared:-未声明}   # 没在运行,值来自机器上的 .env"
-      elif [ -n "$declared" ] && [ "$declared" != "$live_tag" ]; then
-        echo "${v}=${live_tag}   # ${digest}"
-        echo "#   注意:.env 里声明的是 ${declared},实际跑的是 ${live_tag} —— 以实际为准记录"
-      else
-        echo "${v}=${live_tag}   # ${digest}"
+        continue
+      fi
+      rest="${img#*:}"                 # tag 或 tag@sha256:...
+      live_tag="${rest%%@*}"
+      case "$img" in
+        *@*) digest="${img##*@}" ;;
+        *)   digest="(镜像里没有摘要信息)" ;;
+      esac
+      echo "${v}=${live_tag}   # ${digest}"
+      if [ -n "$declared" ] && [ "$declared" != "$live_tag" ]; then
+        echo "#   注意:.env 里声明的是 ${declared},实际跑的是 ${live_tag} —— 这里以实际为准"
       fi
     done
+    rm -f "$LIVE"
     ;;
 
   apply-compose)
