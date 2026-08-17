@@ -71,6 +71,10 @@ publish-base:
     - echo "已发布 $BASE:$PY_VERSION-$CI_COMMIT_SHORT_SHA"
     # 只发固定标签,不发 <pyver>-latest:浮动的基础镜像会让同一份源码构出不同产物。
   rules:
+    # 只在推送触发时判断 changes:API 或手动触发的流水线没有对比基准,changes 会匹配一切,
+    # 于是每次点一下版本集合的按钮都要顺带重建一次基础镜像(实测撞到过,deploy 阶段被它挡住)。
+    - if: '$CI_PIPELINE_SOURCE != "push"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       # 只在配方本身变化时重发;流水线文件的改动与基础镜像内容无关。
       changes: [docker/Dockerfile.base]
