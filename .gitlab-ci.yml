@@ -165,7 +165,8 @@ capture-release:
     - |
       ENV_DIR="deploy/$RELEASE_ENV"
       test -f "$ENV_DIR/services.txt" || { echo "$ENV_DIR/services.txt 不存在"; exit 1; }
-      MODES="$(awk -F': *' '{print $2}' "$ENV_DIR/services.txt" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+      MODES="$(grep -vE '^[[:space:]]*(#|$)' "$ENV_DIR/services.txt" \
+                | sed -n 's/^[^:]*:[[:space:]]*\([a-z]*\).*/\1/p' | sort -u | tr '\n' ' ')"
       echo "环境 $RELEASE_ENV 的形态: $MODES"
       for MODE in $MODES; do
         case "$MODE" in
@@ -209,7 +210,8 @@ apply-release:
       echo "要重放的版本集合:"; grep -vE '^\s*(#|$)' "$FILE" | sed 's/^/  /'
       PAIRS="$(grep -vE '^\s*(#|$)' "$FILE" | sed 's/#.*//' | tr -d ' ' | tr '\n' ' ')"
       [ -n "$PAIRS" ] || { echo "$FILE 里没有 变量名=标签"; exit 1; }
-      MODES="$(awk -F': *' '{print $2}' "$ENV_DIR/services.txt" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+      MODES="$(grep -vE '^[[:space:]]*(#|$)' "$ENV_DIR/services.txt" \
+                | sed -n 's/^[^:]*:[[:space:]]*\([a-z]*\).*/\1/p' | sort -u | tr '\n' ' ')"
       for MODE in $MODES; do
         case "$MODE" in
           swarm) KEY_SRC="$SWARM_SSH_KEY"; HOST="$SWARM_HOST"; USER="$SWARM_USER"; DIR="/opt/rp-ai/$RELEASE_ENV" ;;
