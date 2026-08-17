@@ -1,6 +1,6 @@
 # 维护这套流水线
 
-给改动流水线本身的人。日常发布见 [README.md](README.md);把生产切到集群的一次性步骤见 [CUTOVER.md](CUTOVER.md)。
+给改动流水线本身的人。日常发布见 [README.md](README.md);把生产切到集群的一次性步骤见 [CUTOVER.md](CUTOVER.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
 
 ## 文件
 

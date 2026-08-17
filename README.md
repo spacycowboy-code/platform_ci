@@ -1,6 +1,6 @@
 # 后端服务的流水线
 
-服务仓维护者只需要这一份。改动流水线本身见 [PLATFORM.md](PLATFORM.md);构建器为什么是现在这个见 [BUILDER.md](BUILDER.md)。
+服务仓维护者只需要这一份。改动流水线本身见 [PLATFORM.md](PLATFORM.md);构建器为什么是现在这个见 [BUILDER.md](BUILDER.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
 
 ## 一次发布经过哪些环节
 

@@ -1,0 +1,194 @@
+# 需求逐条对照
+
+对着最初那份需求清单逐条写:现在到哪了、**怎么实现的**、还差什么。
+
+状态标记:✅ 完成 · 🟡 部分 · 🔴 没做 · ⬜ 明确列为 backlog
+
+---
+
+## 微服务代码组织
+
+### ✅ 前端一个仓库,后端多个仓库
+
+7 个服务仓:`rp-ai-portal-fe`(前端)、`rp-ai-portal-be`(门户/技能审计后端)、
+`skill-audit-judge`、`product-structure-information`、`rtep-flow-manager`、`eridoc-client`,
+外加平台仓 `platform-ci`。
+
+### ✅ 一个 Dockerfile、一个 compose、公共 CI 参数抽到一个文件
+
+**怎么实现的**:服务仓的 `.gitlab-ci.yml` 只写"我是谁",其余全部来自平台仓的共享模板。
+
+```yaml
+include:
+  - project: rp-ai-miao/platform-ci
+    ref: v1                      # 锁 tag,平台改动不会突然影响服务
+    file: templates/service.yml
+    inputs:
+      service: product-structure-information
+      app_module: hw_change_analysis.app:app
+```
+
+* **Dockerfile** 不在服务仓里:`templates/service.yml` 构建时生成,所有 Python 服务同一份配方,
+  基础镜像 `python-base` 由平台仓构建并发布。
+* **运行描述**不在服务仓里:端口、挂载、环境变量集中在 `deploy/<环境>/{compose,stack}.yml`。
+  服务仓不知道自己在哪个端口上跑 —— 这是"端口动态分配"能成立的前提。
+* **私有部分**就是上面那几行 inputs。最小的接入实例是 `eridoc-client`:25 行。
+
+### ✅ 镜像部署
+
+**怎么实现的**:CI 构建镜像并推到 Artifactory,标签是 commit sha(不可变);部署时只做"把某个
+标签的镜像跑起来",不在机器上构建、不在机器上拉代码。
+
+* 构建用 kaniko(runner 不允许 privileged,没有 docker daemon 可用),理由见 [BUILDER.md](BUILDER.md)。
+* 部署按钮是手动的:`deploy-test` 任意分支、`deploy-prod` 只在 main。
+* 版本落在机器上的 `.env`(`<SERVICE>_TAG=<sha>`),集群里 swarm 会把标签解析成
+  `tag@sha256:…` 写进 service spec —— **集群是"现在跑的是哪一版"的真相**。
+
+### ⬜ 消息队列
+
+backlog,没有引入。核对过:所有服务的 `requirements*.txt` 里没有任何队列客户端
+(psi 有 `redis>=4.0.0`,那是缓存用途,不是队列)。目前也没有出现真实的异步需求。
+
+---
+
+## 鉴权 / 权限
+
+### ✅ LDAP 登录并拿到 token
+
+**同事 2026-08-17 自己修完的**。原来只匹配 `sAMAccountName`(工号),而邮箱和工号通常无关,
+所以"有人能登录、有人 401"。现在邮箱形式的输入额外匹配 `userPrincipalName / mail /
+proxyAddresses`,并去掉 Windows 的 `DOMAIN\name` 前缀。
+
+生产日志实证:工号 `exinijl` 与邮箱 `amy.x.wang@ericsson.com` 都能登录成功。
+
+token 是无状态 JWT(`app/services/auth_tokens.py`),所以多副本之间不需要粘性会话。
+
+### 🔴 API 级别权限控制:有认证,但授权不可信
+
+**认证**是全局中间件(`app/main.py` 的 `auth_gate`):除白名单外,任何 `/api/` 请求没有有效
+JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users` 都是 401,
+加 `?eid=ADMINMM` 也照样 401。
+
+**授权**是另一回事,现在不成立:
+
+* 中间件把可信身份放在 `request.state.eid`(来自 token 的 `sub`),注释也写明"让处理函数可以
+  信任身份而不是客户端字段"
+* 但生产容器里的代码,`market.py` **6 处**、`skills.py` **2 处**用的都是
+  `x_user_eid: str | None = Header(None)` —— **客户端自己填的 HTTP 头**,`request.state.eid`
+  一处都没用
+* 管理员判定是字面量比较 `requester == "ADMINMM"`,不是配置项 `settings.audit_admin_eid`
+
+**还差什么**:把那 8 处换成 `request.state.eid`,把字面量换成配置项。改动很小,但在服务仓里,
+属于该仓的维护者。
+
+---
+
+## CI
+
+### 🔴 加 SONAR 结点
+
+没做。核对过:**所有仓库里没有任何 sonar 配置**(没有 `sonar-project.properties`,
+`.gitlab-ci.yml` 里也没有 sonar 相关任务)。
+
+**卡在哪**:需要 Sonar 项目和 token。另外查到的实例是 Community Build —— 只能对主分支出报告,
+**卡不住 MR**,所以它的定位只能是"看趋势",不能当门禁。
+
+---
+
+## CD
+
+### 🟡 docker swarm 两台机器 + 负载均衡
+
+**集群**:`100.78.224.45` 是 manager,老机器 `100.77.162.66` 是 worker。地址池显式设成
+`172.16.0.0/16`,因为默认的 `10.0.0.0/8` 与 Artifactory、apt 镜像、Sonar 的内网地址冲突。
+
+**测试环境已经全量跑在集群上**:入口 Traefik、前端 2 副本(两台各一)、审计后端/判定器/数据库
+钉在老机器(数据在它的硬盘上)、对账器 1 副本。
+
+**生产还没切**,步骤与回退见 [CUTOVER.md](CUTOVER.md)。
+
+**负载均衡目前只对前端成立**,这一条要跟需求方对齐预期。逐个服务查过(表在
+[PLATFORM.md](PLATFORM.md)):psi 的产品结构缓存在共享数据库里、可以多副本,但它的日志用
+bind mount 写 `/proj/rp_ait_prod/logs/…`,而这个路径只在老机器上;`rtep-flow-manager` 全部业务
+数据是一个本地 SQLite 文件;审计后端持有技能仓的 git 工作副本;判定器的登录状态在命名卷里;
+grafana 的库在命名卷里。**要多副本,得先把这些状态外置,那是服务侧的改动。**
+
+### ✅ 端口动态分配
+
+**怎么实现的**:反过来做 —— 服务不再声明端口。集群里的服务**一个端口都不发布**,只有入口
+(Traefik)发布一个端口。服务之间按服务名互相访问(`http://audit-backend:8000`),端口由镜像
+自己决定,外部无从依赖。
+
+所以"动态分配"不是分配算法,而是**外部不再需要知道端口**。
+
+### ✅ 按 API 路径转发到对应服务
+
+**怎么实现的**:Traefik 的 file provider,规则在 `deploy/<环境>/edge-dynamic.yml`,
+带显式优先级(越具体越高):
+
+| 路径 | 去哪 | 优先级 |
+|---|---|---|
+| `/api/product-structure/…` | psi,并把前缀改写成 `/api/…` | 100 |
+| `/api/…` | 审计后端 | 50 |
+| `/grafana/…` | grafana | 50 |
+| `/` | 前端 | 1 |
+
+**对外前缀属于环境层,不属于服务**:四个服务内部都用 `/api/`,只有组合它们的这一层能决定谁在
+哪个外部前缀上。psi 那条用 `stripPrefix` + `addPrefix` 实现。
+
+用的是 file provider 而不是 docker provider,原因是 Traefik v3 的 swarm/docker provider 与
+Docker 29 不兼容(报 `client version 1.24 is too old`,`DOCKER_API_VERSION` 无效,容器内验证过)。
+副作用是好的:不再需要把 docker socket 挂给 Traefik。
+
+### 🟡 PROD / TEST 分成两套环境
+
+**已经分开的**:两套环境各有自己的目录(`deploy/prod`、`deploy/test`)、自己的入口端口
+(生产 9001、测试 9101)、自己的环境变量(GitLab File 变量分别投放)。测试环境的审计后端连的是
+测试环境自己的 MySQL 容器(库 `ai_portal`),与生产库无关。
+
+**还没分开的**:测试环境有两条路由实际指向生产实例 ——
+
+| 测试环境的路径 | 实际打到 |
+|---|---|
+| `/api/product-structure/` | 生产 psi(`100.77.162.66:9010`) |
+| `/grafana/` | 生产 grafana(`:9401`) |
+
+后果是在测试环境查一次产品结构,写的是生产库里的缓存表。**要闭环,测试环境得有自己的 psi 和
+自己的 grafana。**
+
+### 🔴 服务版本管理(版本集合)
+
+需求是:前端版本 A + 服务 B 的 B1 + C 的 C1 + D 的 D1 组成一个稳定版本。
+
+**已经定下来的部分**:每个环境机器上的 `.env` 就是"这个环境声明用哪些版本",集群里的
+service spec(`tag@sha256:…`)是"实际跑的是哪些版本"。`stack deploy` 会重新渲染整个栈,
+所以版本必须声明完整 —— 缺一个就拒绝部署,不给兜底值(曾因为有兜底值,导致没写进 `.env` 的
+服务被静默拉回文件里的旧版本)。
+
+**没做的部分**:没有"把当前这一组版本命名保存下来,以后能整组重放"的机制。也就是需求里
+"组合成一个稳定的版本"这句还没有对应实现。
+
+---
+
+## 可观测
+
+### ⬜ 一个地方看所有服务的日志(类似 portainer)
+
+backlog。核对过:没有引入任何相关组件(0 处 portainer / loki / promtail / prometheus)。
+
+现状是每个服务同时写 stdout 和容器内的滚动日志文件,`docker logs` / `docker service logs` 能
+分服务看。**注意**:日志文件用 bind mount 落在各自节点的 `/proj/rp_ait_prod/logs/…`,
+两台机器各写各的 —— 这也是集中日志要先解决的问题。
+
+### ⬜ 分布式链路追踪
+
+backlog,0 处 opentelemetry / jaeger / zipkin。
+
+### ✅ 健康检查(但都是浅的)
+
+每个服务都有健康检查,`compose.yml` / `stack.yml` 里配了 `healthcheck`,数据库用
+`mysqladmin ping`。
+
+**局限要写清楚**:这些探针只证明进程活着。psi 的 `/health` 返回 `{"status":"ok"}` 时并不查
+数据库、也不查 RSB,所以"活着但没用"检测不出来 —— 曾经出现过"健康但 RSB 调用超时"。要真正
+反映可用性,得由各服务在探针里查自己的关键依赖。
