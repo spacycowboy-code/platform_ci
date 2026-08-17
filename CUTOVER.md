@@ -26,9 +26,9 @@
 
 | 服务 | 能并行? | 依据 |
 |---|---|---|
-| `product-structure-information` | ✅ | 本地磁盘缓存是各自一份,互不影响(缓存分叉的后果见 PLATFORM.md,所以单副本) |
+| `product-structure-information` | ✅ | 缓存在共享数据库表里,副本之间答案一致;唯一的本地依赖是日志的 bind mount,那个路径只在老机器上 |
 | `frontend` | ✅ | 只有静态文件。但它占着 9001,所以放最后 |
-| `grafana` | ❌ | 数据在命名卷 `ai-portal-be_grafana-data`(不是外部库),两个实例挂同一个卷会互相破坏 |
+| `grafana` | ❌ | 两个实例挂同一个命名卷会互相破坏。但卷里没有不可再生的东西(见 PLATFORM.md),所以它也可以改成无卷 + 配置用 docker config 下发,那样就不必钉机器 |
 | `rtep-flow-manager` | ❌ | 业务数据是本地 SQLite(`/proj/rp_ait_prod/data/rtep-flow-manager` → `/app/data/rtep_flow.db`),两个进程写同一个文件会锁冲突甚至损坏 |
 | `audit-backend` + `audit-reconciler` + `audit-judge` | ❌ | 后端持有技能仓 git 工作副本并往外推送;判定器的 kiro 登录在命名卷里。而且后端按服务名找判定器(`audit-judge:8790`),**三个必须同一批搬** |
 
