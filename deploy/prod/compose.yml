@@ -82,27 +82,6 @@ services:
 
   # agent-artifex 属于本环境但当前不运行(容器自 2026-08-05 起是 Exited)。
   # profiles 让 docker compose up 跳过它;删掉 profiles 两行即启动。
-  agent-artifex:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/agent-artifex:${AGENT_ARTIFEX_TAG:-ead8343c}
-    container_name: agent-artifex
-    restart: unless-stopped
-    profiles:
-      - stopped
-    ports:
-      - "10000:8000"
-    volumes:
-      - /proj/rp_ait_prod/logs/agent-artifex:/app/logs
-    healthcheck:
-      test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
-  # ---- 技能审计栈 ----
-  # 三个容器共用两个镜像:后端与对账器是同一个镜像的两种角色,判定器是另一个镜像。
-  # 容器名保持原样(ai-portal-be-*),前端 nginx 按宿主机端口 9000 反代,与容器名无关。
   audit-backend:
     image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-f33b3587}
     container_name: ai-portal-be-backend

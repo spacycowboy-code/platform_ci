@@ -10,7 +10,6 @@
 # 那一行就是迁移这个决定本身,可评审、可回退。
 product-structure-information: compose product-structure-information
 rtep-flow-manager: compose rtep-flow-manager
-agent-artifex: compose agent-artifex
 rp-ai-portal-be: compose audit-backend audit-reconciler
 skill-audit-judge: compose audit-judge
 rp-ai-portal-fe: compose frontend
