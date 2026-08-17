@@ -75,6 +75,62 @@ publish-base:
       # 只在配方本身变化时重发;流水线文件的改动与基础镜像内容无关。
       changes: [docker/Dockerfile.base]
 
+# grafana 的看板和数据源不由镜像驱动(它是第三方镜像),所以没有服务仓能触发它的部署。
+# 这个按钮补上那条路:把 deploy/<环境>/grafana/ 发到机器上。
+#
+# 看板改动不需要重启:provider 里 updateIntervalSeconds: 30,grafana 每 30 秒重读一次看板目录,
+# 新增和修改都会自动生效(实测)。数据源和 provider.yml 是启动时读的,不会热加载(也实测过),
+# 所以只有这两类文件变了才重启 grafana。
+deploy-grafana-config:
+  stage: deploy
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  rules:
+    # 服务仓触发的部署流水线里不要出现这个按钮
+    - if: '$DEPLOY_ENV'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  variables:
+    GRAFANA_ENV: prod
+    GRAFANA_PORT: "9401"
+  environment:
+    name: $GRAFANA_ENV
+  before_script:
+    - apk add --no-cache openssh-client rsync
+  script:
+    - |
+      : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"; : "${DEPLOY_SSH_KEY:?未设置}"
+      SRC="deploy/$GRAFANA_ENV/grafana"
+      test -d "$SRC" || { echo "$SRC 不存在"; exit 1; }
+      case "$GRAFANA_ENV" in
+        test) HOST_DIR=/proj/rp_ait_prod/services/test-env ;;
+        prod) HOST_DIR=/proj/rp_ait_prod/services/prod-env ;;
+        *) echo "未知环境 $GRAFANA_ENV"; exit 1 ;;
+      esac
+      install -m 600 "$DEPLOY_SSH_KEY" /tmp/key
+      SSH="ssh -i /tmp/key -o BatchMode=yes -o StrictHostKeyChecking=no"
+      echo "看板文件:"; ls -1 "$SRC/dashboards" | sed 's/^/  /'
+      # provisioning 变了才需要重启,先记下同步前的样子
+      BEFORE=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/grafana/provisioning/*/*.y*ml 2>/dev/null | md5sum | cut -d' ' -f1")
+      # --delete:从 git 里删掉一个看板,机器上也要消失,否则会留下没人知道的残留
+      rsync -rlt --delete -e "$SSH" --itemize-changes "$SRC/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/grafana/"
+      AFTER=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/grafana/provisioning/*/*.y*ml 2>/dev/null | md5sum | cut -d' ' -f1")
+      if [ "$BEFORE" != "$AFTER" ]; then
+        echo "provisioning 变了,重启 grafana"
+        $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose up -d --force-recreate grafana"
+      else
+        echo "provisioning 没变,不重启;看板改动 30 秒内自动生效"
+      fi
+      echo "等 grafana 认到新内容:"
+      for i in $(seq 1 8); do
+        sleep 6
+        OUT=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "curl -s --max-time 10 'http://localhost:$GRAFANA_PORT/api/search?type=dash-db'" || true)
+        echo "$OUT" | grep -q '"uid"' && break
+      done
+      echo "$OUT" | tr ',' '\n' | grep -E '"(title|uid)"' | sed 's/^/  /'
+      rm -f /tmp/key
+
 # 被服务仓的部署按钮触发时执行部署。
 include:
   - local: templates/deploy.yml
