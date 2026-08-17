@@ -85,13 +85,15 @@ apply:
         "docker login $REGISTRY -u '$docker_user' --password-stdin >/dev/null"
     - |
       if [ "$MODE" = swarm ]; then
-        EXTRA_VAR=""
-        [ -n "$DEPLOY_EXTRA_SERVICE" ] && EXTRA_VAR="$(echo "$DEPLOY_EXTRA_SERVICE" | tr 'a-z-' 'A-Z_')_TAG"
+        PAIRS="$VAR=$DEPLOY_TAG"
+        # 同一个仓构建出两个镜像时(如后端与对账器),两者版本相同
+        [ -n "$DEPLOY_EXTRA_SERVICE" ] && \
+          PAIRS="$PAIRS $(echo "$DEPLOY_EXTRA_SERVICE" | tr 'a-z-' 'A-Z_')_TAG=$DEPLOY_TAG"
         # 部署逻辑放在一个独立脚本里执行,不写成 ssh 双引号里的一大段 shell:
         # 那样每个 $ 和引号都要多层转义,已经因此坏过两次。
         scp $SSHBASE templates/swarm-apply.sh "$TARGET_USER@$TARGET_HOST:$HOST_DIR/swarm-apply.sh"
         ssh $SSHBASE "$TARGET_USER@$TARGET_HOST" \
-          "chmod +x '$HOST_DIR/swarm-apply.sh' && '$HOST_DIR/swarm-apply.sh' '$DEPLOY_ENV' '$VAR' '$DEPLOY_TAG' '$EXTRA_VAR'"
+          "chmod +x '$HOST_DIR/swarm-apply.sh' && '$HOST_DIR/swarm-apply.sh' '$DEPLOY_ENV' $PAIRS"
         exit 0
       fi
       # ---------- 以下是 compose(单机)形态 ----------

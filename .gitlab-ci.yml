@@ -108,8 +108,12 @@ deploy-grafana-config:
         prod) HOST_DIR=/proj/rp_ait_prod/services/prod-env ;;
         *) echo "未知环境 $GRAFANA_ENV"; exit 1 ;;
       esac
-      install -m 600 "$DEPLOY_SSH_KEY" /tmp/key
-      SSH="ssh -i /tmp/key -o BatchMode=yes -o StrictHostKeyChecking=no"
+      # File 类型变量带 CRLF 且末尾可能缺换行,直接用会 "error in libcrypto"(上次就是这样失败的)
+      mkdir -p ~/.ssh
+      tr -d '\r' < "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+      printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+      ssh-keygen -y -P "" -f ~/.ssh/id_deploy >/dev/null || { echo "私钥不可解析"; exit 1; }
+      SSH="ssh -i $HOME/.ssh/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
       echo "看板文件:"; ls -1 "$SRC/dashboards" | sed 's/^/  /'
       # provisioning 变了才需要重启,先记下同步前的样子
       BEFORE=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/grafana/provisioning/*/*.y*ml 2>/dev/null | md5sum | cut -d' ' -f1")
@@ -129,7 +133,110 @@ deploy-grafana-config:
         echo "$OUT" | grep -q '"uid"' && break
       done
       echo "$OUT" | tr ',' '\n' | grep -E '"(title|uid)"' | sed 's/^/  /'
-      rm -f /tmp/key
+
+# ---------- 版本集合 ----------
+# 需求里的"前端版本 A + 服务 B 的 B1 + …组成一个稳定版本"。
+#
+# 真相在两处:机器上的 .env 是"声明用哪些版本",集群的 service spec(tag@sha256)是"实际跑的"。
+# 版本集合就是把某一刻的这一组记下来,以后能整组重放。
+#
+# 为什么记录要人来提交而不是 CI 自动提交:本项目的推送规则是 reject_unsigned_commits,
+# CI 没有签名能力。所以 capture 只负责打印,人贴进 deploy/<环境>/releases/<名字>.env 并提交
+# —— 这样版本集合是可评审的,而且真相只有 git 一处。
+.release-base:
+  stage: deploy
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  before_script:
+    - apk add --no-cache openssh-client rsync
+    - |
+      mkdir -p ~/.ssh
+      # File 类型变量带 CRLF 且末尾可能缺换行,直接用会报 "error in libcrypto"
+      tr -d '\r' < "$KEY_SRC" > ~/.ssh/id_deploy
+      printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+      ssh-keygen -y -P "" -f ~/.ssh/id_deploy >/dev/null || { echo "私钥不可解析"; exit 1; }
+      echo "SSH_OPTS=-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" > /tmp/sshopts
+
+capture-release:
+  extends: .release-base
+  rules:
+    - if: '$DEPLOY_ENV'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  variables:
+    RELEASE_ENV: test
+  script:
+    - |
+      ENV_DIR="deploy/$RELEASE_ENV"
+      test -f "$ENV_DIR/services.txt" || { echo "$ENV_DIR/services.txt 不存在"; exit 1; }
+      MODES="$(awk -F': *' '{print $2}' "$ENV_DIR/services.txt" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+      echo "环境 $RELEASE_ENV 的形态: $MODES"
+      for MODE in $MODES; do
+        case "$MODE" in
+          swarm) KEY_SRC="$SWARM_SSH_KEY"; HOST="$SWARM_HOST"; USER="$SWARM_USER"; DIR="/opt/rp-ai/$RELEASE_ENV" ;;
+          compose) KEY_SRC="$DEPLOY_SSH_KEY"; HOST="$DEPLOY_HOST"; USER="$DEPLOY_USER"
+                   case "$RELEASE_ENV" in
+                     test) DIR=/proj/rp_ait_prod/services/test-env ;;
+                     prod) DIR=/proj/rp_ait_prod/services/prod-env ;;
+                   esac ;;
+          *) echo "未知形态 $MODE"; exit 1 ;;
+        esac
+        mkdir -p ~/.ssh
+        tr -d '\r' < "$KEY_SRC" > ~/.ssh/id_deploy
+        printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+        SSHB="-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        scp $SSHB templates/release.sh "$USER@$HOST:$DIR/release.sh"
+        echo "================ $MODE 形态的版本集合 ================"
+        ssh $SSHB "$USER@$HOST" "chmod +x '$DIR/release.sh' && '$DIR/release.sh' capture '$RELEASE_ENV' '$MODE'"
+      done
+      echo "================================================="
+      echo "把上面的内容存成 deploy/$RELEASE_ENV/releases/<名字>.env 提交,即固定为一个版本集合。"
+
+apply-release:
+  extends: .release-base
+  rules:
+    - if: '$DEPLOY_ENV'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main" && $RELEASE'
+      when: manual
+      allow_failure: false
+  variables:
+    RELEASE_ENV: test
+  environment:
+    name: $RELEASE_ENV
+  script:
+    - |
+      : "${RELEASE:?要传版本集合的名字}"
+      ENV_DIR="deploy/$RELEASE_ENV"
+      FILE="$ENV_DIR/releases/$RELEASE.env"
+      test -f "$FILE" || { echo "$FILE 不存在"; exit 1; }
+      echo "要重放的版本集合:"; grep -vE '^\s*(#|$)' "$FILE" | sed 's/^/  /'
+      PAIRS="$(grep -vE '^\s*(#|$)' "$FILE" | sed 's/#.*//' | tr -d ' ' | tr '\n' ' ')"
+      [ -n "$PAIRS" ] || { echo "$FILE 里没有 变量名=标签"; exit 1; }
+      MODES="$(awk -F': *' '{print $2}' "$ENV_DIR/services.txt" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+      for MODE in $MODES; do
+        case "$MODE" in
+          swarm) KEY_SRC="$SWARM_SSH_KEY"; HOST="$SWARM_HOST"; USER="$SWARM_USER"; DIR="/opt/rp-ai/$RELEASE_ENV" ;;
+          compose) KEY_SRC="$DEPLOY_SSH_KEY"; HOST="$DEPLOY_HOST"; USER="$DEPLOY_USER"
+                   case "$RELEASE_ENV" in
+                     test) DIR=/proj/rp_ait_prod/services/test-env ;;
+                     prod) DIR=/proj/rp_ait_prod/services/prod-env ;;
+                   esac ;;
+        esac
+        mkdir -p ~/.ssh
+        tr -d '\r' < "$KEY_SRC" > ~/.ssh/id_deploy
+        printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+        SSHB="-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        if [ "$MODE" = swarm ]; then
+          scp $SSHB templates/swarm-apply.sh "$USER@$HOST:$DIR/swarm-apply.sh"
+          ssh $SSHB "$USER@$HOST" "chmod +x '$DIR/swarm-apply.sh' && '$DIR/swarm-apply.sh' '$RELEASE_ENV' $PAIRS"
+        else
+          TARGETS="$(sed -n 's/^[^:]*:[[:space:]]*compose[[:space:]]*//p' "$ENV_DIR/services.txt" | tr '\n' ' ')"
+          scp $SSHB templates/release.sh "$USER@$HOST:$DIR/release.sh"
+          ssh $SSHB "$USER@$HOST" "chmod +x '$DIR/release.sh' && '$DIR/release.sh' apply-compose '$RELEASE_ENV' $TARGETS -- $PAIRS"
+        fi
+      done
 
 # 被服务仓的部署按钮触发时执行部署。
 include:

@@ -3,16 +3,16 @@
 # 那样每个 $ 和引号都要多层转义,已经因此坏过两次(config 名被写成一段错误提示文字)。
 #
 # 入参(位置参数):
-#   $1 环境名(= stack 名,也是 GitLab 环境名)
-#   $2 本次部署的版本变量名,如 RP_AI_PORTAL_FE_TAG
-#   $3 本次部署的镜像标签
-#   $4 可选:同一个仓的第二个镜像的版本变量名
+#   $1     环境名(= stack 名,也是 GitLab 环境名)
+#   $2...  一个或多个 变量名=标签,如 RP_AI_PORTAL_FE_TAG=e70a3471
+#
+# 接受多个而不是固定一个:发布一个服务时传一对,整组重放一个版本集合时传全部
+# (见 README 的"版本集合"),两种情形共用同一条部署路径。
 set -eu
 
 ENV_NAME="$1"
-VAR="$2"
-TAG="$3"
-EXTRA_VAR="${4:-}"
+shift
+[ "$#" -ge 1 ] || { echo "至少要传一个 变量名=标签"; exit 1; }
 
 cd "$(dirname "$0")"
 # 目录权限自己兜住:同环境的密钥就在这里,不能让同机其它用户读到
@@ -20,12 +20,17 @@ chmod 750 . 2>/dev/null || true
 
 # ---------- 1. 记下本次要部署的版本 ----------
 touch .env
-sed -i "/^${VAR}=/d" .env
-echo "${VAR}=${TAG}" >> .env
-if [ -n "$EXTRA_VAR" ]; then
-  sed -i "/^${EXTRA_VAR}=/d" .env
-  echo "${EXTRA_VAR}=${TAG}" >> .env
-fi
+for kv in "$@"; do
+  case "$kv" in
+    *=*) ;;
+    *) echo "参数 '$kv' 不是 变量名=标签 的形式"; exit 1 ;;
+  esac
+  v="${kv%%=*}"; t="${kv#*=}"
+  [ -n "$v" ] && [ -n "$t" ] || { echo "参数 '$kv' 的变量名或标签为空"; exit 1; }
+  sed -i "/^${v}=/d" .env
+  echo "${v}=${t}" >> .env
+  echo "记下 ${v}=${t}"
+done
 
 # ---------- 2. 版本必须声明完整 ----------
 # stack.yml 里的版本变量写成朴素 ${X_TAG}(不带 :? 提示 —— docker 对 :? 里的文字解析不可靠,
