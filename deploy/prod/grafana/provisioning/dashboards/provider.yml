@@ -8,7 +8,12 @@ providers:
     type: file
     disableDeletion: false
     updateIntervalSeconds: 30
-    allowUiUpdates: true
+    # false:看板以 git 里的文件为准,界面上不能保存修改。
+    # 开着 true 的那段时间里,8-06 有人在界面上把三个面板改成 table 并重排了布局,改动只留在
+    # grafana 的数据卷里、git 里查不到 —— 卷一旦重建就会悄悄变回旧样子。那次的结果已经导出到
+    # dashboards/skill-metrics.json,所以关掉之后显示不变。
+    # 以后改看板:界面上调好 -> Export JSON -> 覆盖这个仓里的文件 -> 提交 -> 部署。
+    allowUiUpdates: false
     options:
       path: /var/lib/grafana/dashboards
       foldersFromFilesStructure: false

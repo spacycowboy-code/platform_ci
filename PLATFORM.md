@@ -150,6 +150,20 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 所以**"负载均衡"目前只对前端成立**。psi 和 grafana 的状态问题已经查清且可解,别的要多副本得先把
 本地状态外置 —— **那是服务侧的改动,不是平台能替它们做的**。
 
+### grafana 的看板以文件为准,别的东西留在卷里
+
+`allowUiUpdates: false`:看板由 `deploy/<环境>/grafana/dashboards/*.json` 下发,界面上存不了
+(实测 admin 保存返回 `400 Cannot save provisioned dashboard`)。改看板的流程是界面上调好 →
+Export JSON → 覆盖仓里的文件 → 提交 → 部署。
+
+**数据卷保留,grafana 继续钉老机器**,这是权衡后的选择,不是没想到:去掉卷能让它在集群里换机器,
+但 grafana 自己的库还存着告警规则、标注、API token、收藏这些**无法由文件下发的东西**,一旦哪天
+有人在界面上建了这些,重启就会静默消失。为了"能换机器"这点收益换一个静默丢数据的坑不值。
+真要让它换机器,正解是给它接外部数据库(MySQL/Postgres),那要在生产库上新建 schema。
+
+顺带记住:grafana 11 能从文件下发的不止看板和数据源,还有 `alerting`、`access-control`、`plugins`
+(镜像里 `conf/provisioning` 下的目录就是清单)。**以后要加告警规则,写进文件、不要在界面上建。**
+
 ### 不要从"存在"推断"生效"
 
 这条写在这里是因为同一个错误犯了四次:
