@@ -68,6 +68,8 @@ services:
       start_period: 10s
     deploy:
       replicas: 2
+      placement:
+        preferences: [{spread: node.hostname}]
       restart_policy: {condition: any}
       update_config: {order: start-first, failure_action: rollback, monitor: 30s}
       rollback_config: {order: start-first}
@@ -96,6 +98,10 @@ services:
       start_period: 20s
     deploy:
       replicas: 2
+      # 尽量一台一个:滚动更新后 swarm 不会自己重新平衡,两个副本可能都落在同一台机器上
+      # (实测就是这样),那样"两台机器"这件事就只剩调度自由度,没有冗余。
+      placement:
+        preferences: [{spread: node.hostname}]
       restart_policy: {condition: any}
       update_config: {order: start-first, failure_action: rollback, monitor: 30s}
       rollback_config: {order: start-first}
