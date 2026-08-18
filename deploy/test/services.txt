@@ -9,3 +9,4 @@ rp-ai-portal-be: swarm
 skill-audit-judge: swarm
 rp-ai-portal-fe: swarm
 traefik: swarm
+product-structure-information: swarm

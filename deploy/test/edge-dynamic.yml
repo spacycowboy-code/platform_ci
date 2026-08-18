@@ -46,7 +46,7 @@ http:
     psi:
       loadBalancer:
         # 测试环境没有自己的 psi,原本就指生产那一份(现在生产的 psi 已在集群里)
-        servers: [{url: "http://100.77.162.66:9010"}]
+        servers: [{url: "http://product-structure-information:8000"}]   # 测试环境自己的一份
     grafana:
       loadBalancer:
         servers: [{url: "http://100.77.162.66:9401"}]

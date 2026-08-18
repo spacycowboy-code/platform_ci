@@ -50,8 +50,9 @@ services:
     environment:
       # 集群内按服务名;host.docker.internal 只解析到副本所在那台机器,不能用
       AUDIT_UPSTREAM: "http://audit-backend:8000"
-      # psi 和 grafana 测试环境没有自己的实例,原本就指向生产那一份,这里照原样保留
-      PSI_UPSTREAM: "http://100.77.162.66:9010"
+      # psi 已经是测试环境自己的一份,按服务名访问
+      PSI_UPSTREAM: "http://product-structure-information:8000"
+      # grafana 还没有自己的实例,暂时仍指向生产那一份(只读看板)
       GRAFANA_UPSTREAM: "http://100.77.162.66:9401"
       # 这个环境没有 eridoc 实例。变量仍然必须给:前端镜像的 nginx 模板里有一条
       # proxy_pass ${ERIDOC_UPSTREAM}/api/,不给会被 envsubst 渲成空串,整份配置非法,
@@ -73,6 +74,34 @@ services:
       resources:
         limits: {cpus: "0.5", memory: 256M}
         reservations: {memory: 64M}
+
+  # 产品结构服务。测试环境从今天起有自己的一份,不再打生产那一份。
+  #
+  # 两个副本:产品结构缓存在共享数据库表 product_struct_cache 里,不是容器本地磁盘
+  # (那层磁盘缓存是死代码,已删),所以两个副本对同一个查询给出同样的答案。这是后端服务里
+  # 第一个真正能横向扩的,先在测试环境跑着看。
+  #
+  # 不挂日志目录:生产那份挂 /proj/rp_ait_prod/logs/…,而这个路径只在老机器上,挂了等于把副本
+  # 钉死在一台机器。它同时写 stdout,用 docker service logs 看。
+  product-structure-information:
+    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG}
+    networks: [inner]
+    env_file: [product-structure-information.env]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+      restart_policy: {condition: any}
+      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
+      rollback_config: {order: start-first}
+      resources:
+        limits: {cpus: "1.0", memory: 1G}
+        reservations: {memory: 128M}
 
   audit-reconciler:
     image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}

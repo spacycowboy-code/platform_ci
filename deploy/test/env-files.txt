@@ -1,2 +1,3 @@
 # 目标文件名=CI 变量名[=形态]。形态省略即 compose(投到单机),swarm 表示投到集群 manager。
 audit-test.env=AUDIT_TEST_ENV=swarm
+product-structure-information.env=PSI_TEST_ENV=swarm
