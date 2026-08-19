@@ -45,6 +45,11 @@ variables:
   BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562"
   IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
   EXTRA_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.extra_service ]]"
+  # kaniko 的层缓存仓。与镜像同一路径前缀,所以推镜像的那套凭据就能写。
+  # 实测(rp-ai-portal-be):不开缓存一次构建 136s,其中装 skill-scanner 41s、三次全盘快照 50s;
+  # 这些层只要 Dockerfile.thin 不变就直接命中。另外 build(不推)与 deploy-*(推)本来各自完整
+  # 构建一遍,开缓存后第二遍几乎免费。
+  CACHE_REPO: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/build-cache"
   KIND: "$[[ inputs.kind ]]"
   TAG: "$CI_COMMIT_SHORT_SHA"
   CTX: "$CI_PROJECT_DIR/$[[ inputs.context ]]"
@@ -80,6 +85,9 @@ lint:
 test:
   stage: test
   image: $BASE_IMAGE
+  variables:
+    # runner 已经挂了 /cache 卷,pip 却没用它:实测每次 test 都在重下同一批 wheel(6.7s)。
+    PIP_CACHE_DIR: /cache/pip
   rules:
     - if: '$KIND == "python"'
   before_script:
@@ -194,6 +202,7 @@ test:
           --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
           --build-arg "DIST_DIR=$[[ inputs.dist_dir ]]" \
           --build-arg "BUILD_COMMAND=npm run build" \
+          --cache=true --cache-repo="$CACHE_REPO" \
           $DEST --snapshot-mode=redo --single-snapshot --skip-unused-stages
       fi
     - |
@@ -206,6 +215,7 @@ test:
           /kaniko/executor --context "$CI_PROJECT_DIR" \
             --dockerfile "$CI_PROJECT_DIR/$EXTRA_DOCKERFILE" \
             --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
+            --cache=true --cache-repo="$CACHE_REPO" \
             $DEST2 --snapshot-mode=redo --single-snapshot
         fi
       fi
