@@ -46,9 +46,6 @@ variables:
   IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
   EXTRA_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.extra_service ]]"
   # kaniko 的层缓存仓。与镜像同一路径前缀,所以推镜像的那套凭据就能写。
-  # 实测(rp-ai-portal-be):不开缓存一次构建 136s,其中装 skill-scanner 41s、三次全盘快照 50s;
-  # 这些层只要 Dockerfile.thin 不变就直接命中。另外 build(不推)与 deploy-*(推)本来各自完整
-  # 构建一遍,开缓存后第二遍几乎免费。
   CACHE_REPO: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/build-cache"
   KIND: "$[[ inputs.kind ]]"
   TAG: "$CI_COMMIT_SHORT_SHA"
@@ -187,6 +184,11 @@ test:
       grep -v _auth "$CTX/Dockerfile.thin"
     - |
       # 标签含 commit,已存在就不再构建。
+          # 开层缓存,并且不能再用 --single-snapshot:后者把整个文件系统压成一个快照,
+          # 于是没有中间层产物可写回缓存,--cache 只会读不到、白查一遍(实测:两轮构建都是
+          # "No cached layer found",全程零条 Pushing cache)。代价是层数变多、镜像略大。
+          # 实测收益(rp-ai-portal-be):装 skill-scanner 41s 与三次全盘快照 50s 都能省掉,
+          # 另外 build(--no-push)与 deploy-*(--destination)本来各自完整构建一遍。
       if [ "${PUSH_IMAGE:-false}" = "true" ] && crane manifest "$IMAGE:$TAG" >/dev/null 2>&1; then
         echo "$IMAGE:$TAG 已存在,跳过构建"
       else
@@ -203,7 +205,7 @@ test:
           --build-arg "DIST_DIR=$[[ inputs.dist_dir ]]" \
           --build-arg "BUILD_COMMAND=npm run build" \
           --cache=true --cache-repo="$CACHE_REPO" \
-          $DEST --snapshot-mode=redo --single-snapshot --skip-unused-stages
+          $DEST --snapshot-mode=redo --skip-unused-stages
       fi
     - |
       # 同一个仓的第二个镜像(配方与薄层实质不同,用仓里自带的 Dockerfile)。
@@ -216,7 +218,7 @@ test:
             --dockerfile "$CI_PROJECT_DIR/$EXTRA_DOCKERFILE" \
             --build-arg "GIT_COMMIT=$CI_COMMIT_SHORT_SHA" \
             --cache=true --cache-repo="$CACHE_REPO" \
-            $DEST2 --snapshot-mode=redo --single-snapshot
+            $DEST2 --snapshot-mode=redo
         fi
       fi
 
