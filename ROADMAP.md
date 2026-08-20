@@ -111,7 +111,7 @@ JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users`
 
 **生产还没切**,步骤与回退见 [CUTOVER.md](CUTOVER.md)。
 
-**负载均衡目前只对前端成立**,这一条要跟需求方对齐预期。逐个服务查过(表在
+**负载均衡现在对前端、psi、审计引擎成立**(各 2 副本、一台一个);剩下的还不行,这一条要跟需求方对齐预期。逐个服务查过(表在
 [PLATFORM.md](PLATFORM.md)):psi 的产品结构缓存在共享数据库里、可以多副本,但它的日志用
 bind mount 写 `/proj/rp_ait_prod/logs/…`,而这个路径只在老机器上;`rtep-flow-manager` 全部业务
 数据是一个本地 SQLite 文件;审计后端持有技能仓的 git 工作副本;判定器的登录状态在命名卷里;

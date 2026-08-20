@@ -138,8 +138,8 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 
 | 服务 | 副本数 | 依据 |
 |---|---|---|
-| 前端 | 可多副本 | 只有静态文件 |
-| `product-structure-information` | 可多副本,但**当前卡在日志挂载** | 产品结构缓存在**共享数据库表** `product_struct_cache`,不是容器本地磁盘,所以副本之间答案一致。曾经还有一层磁盘缓存,是死代码(无任何调用者;生产容器跑了数周该目录 0 个文件),已删除。真正还挡着的是:日志用 bind mount 写 `/proj/rp_ait_prod/logs/…`,而这个路径只在老机器上(ext4,新机器没有) |
+| 前端 | **2,一台一个** | 只有静态文件。同样用 `max_replicas_per_node: 1` + `stop-first`,理由见下面 psi 那一行 |
+| `product-structure-information` | **2,一台一个** | 产品结构缓存在**共享数据库表** `product_struct_cache`,不是容器本地磁盘,所以副本之间答案一致。曾经还有一层磁盘缓存,是死代码(无任何调用者;生产容器跑了数周该目录 0 个文件),已删除。集群里的声明**不挂任何卷**,所以两台都能跑;生产那份 compose 还挂着日志目录 `/proj/rp_ait_prod/logs/…`(单机上无妨),搬上集群时要一并去掉 —— 那个路径只在老机器上 |
 | `rtep-flow-manager` | **1**,且钉老机器 | 全部业务数据是一个本地 SQLite 文件(`/app/data/rtep_flow.db`)。两个进程写同一个 SQLite 会锁冲突甚至损坏 |
 | `audit-backend` | **1**,且钉老机器 | 持有技能仓的 git 工作副本(`/proj/radio_ivc_rvc_workspace/ezhgmio/rp-ai-skill`,容器内同路径)并往外推送;代码直接把它当读写文件系统用(`Path(skill_repo_path)/…/SKILL.md`),两个副本写同一个工作树会坏 |
 | `audit-reconciler` | **1** | 周期性对账,多副本只是重复做同一件事,还会互相竞争同一批 MR 与数据行 |
@@ -148,7 +148,7 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 | `db`(测试环境) | **1**,且钉老机器 | 两个 MySQL 挂同一数据目录会损坏数据 |
 | `grafana` | **1**,可以不钉机器 | 自带的 SQLite 在命名卷里,但**卷里没有不可再生的东西**:看板与数据源由文件下发,admin 由环境变量创建,0 条告警规则、0 条标注(22 张非空表逐张查过)。前提是把配置改成 docker config 下发(bind mount 的宿主目录只存在于 manager),并且看板以文件为准 |
 
-所以**"负载均衡"目前只对前端成立**。psi 和 grafana 的状态问题已经查清且可解,别的要多副本得先把
+所以现在**前端、psi、审计引擎三个服务是真的两副本、一台一个**;grafana 的状态问题已经查清且可解,别的要多副本得先把
 本地状态外置 —— **那是服务侧的改动,不是平台能替它们做的**。
 
 ### grafana 的看板:真相在哪还没定
