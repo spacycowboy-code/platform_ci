@@ -138,8 +138,12 @@ services:
         # 而挤在一起才是把"两副本"变成一句空话。
         max_replicas_per_node: 1
       restart_policy: {condition: any}
-      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
-      rollback_config: {order: start-first}
+      # stop-first,不是 start-first。两台两副本 + 每台最多一个 = 更新时新任务无处可放:实测第二个
+      # 副本卡在 Pending "no suitable node (max replica…)",更新永远完不了。
+      # 代价是更新过程中有一小段只有一个副本在跑(parallelism 1,所以不会到零)。这个代价比"两个副本
+      # 挤在同一台、那台一挂就全没了"小得多,而后者是 preferences 的真实结果。
+      update_config: {order: stop-first, failure_action: rollback, monitor: 30s, parallelism: 1}
+      rollback_config: {order: stop-first, parallelism: 1}
       resources:
         # 一次扫描的上限是 900 秒,行为分析默认关。给的额度按门户后端今天的量级来。
         limits: {cpus: "2.0", memory: 2G}
