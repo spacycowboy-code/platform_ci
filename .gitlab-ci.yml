@@ -47,7 +47,7 @@ check-templates:
           print(f"{p}: 输入 {len(inputs)} 个(必填 {len(required)}: {required}),任务 {names}")
       sys.exit(bad)
       PY
-    # 缓存清理工具的判断逻辑(选谁删、敢不敢删)也在这里过一遍,不联网。
+    # 缓存清理工具的判断逻辑(选哪些层、是否执行删除)也在这里过一遍,不联网。
     - python3 tools/test_prune_build_cache.py
 
 # 缓存仓只会长,不会缩:kaniko 的 --cache-ttl(默认 336h)过期后只是不再采用,不会删。

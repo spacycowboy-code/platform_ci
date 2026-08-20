@@ -2,9 +2,9 @@
 """prune_build_cache 的判断逻辑测试。
 
 真实缓存仓里的层往往全是"今天刚命中过",所以拿它跑不出"该删"的分支 —— 报告永远是 0,
-看不出选择逻辑到底有没有在工作。这里用假的 artifactory 把边界和护栏都逼出来。
+看不出选择逻辑有没有在工作。这里用假的 artifactory 覆盖边界与护栏。
 
-不联网。真实的 DELETE 已经在真仓上验证过(返回 204),这里只管"选谁"和"敢不敢删"。
+不联网。真实的 DELETE 已经在真仓上验证过(返回 204),这里只覆盖"选哪些层"与"是否执行删除"。
 """
 
 from __future__ import annotations
@@ -68,7 +68,7 @@ class TestSelection(unittest.TestCase):
         return mod.collect(FakeArtifactory(results), "r", "proj-rvc/rp-ai/build-cache")
 
     def test_按最后命中而非创建时间(self):
-        """老层但天天命中 —— 必须留下。这是整个工具的关键取舍。"""
+        """创建时间很老但最近命中过的层应当保留。"""
         rows = self.rows([item(HEX, created_days=200, downloaded_days=1)])
         self.assertEqual(rows[0]["age_days"], 1,
                          "应按最后命中(1 天)判断,而不是创建时间(200 天)")
