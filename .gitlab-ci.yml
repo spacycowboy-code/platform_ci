@@ -195,10 +195,13 @@ backup-portal-facts:
   script:
     - |
       : "${DEPLOY_SSH_KEY:?未设置}"; : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
-      install -m 600 /dev/null key
-      # File 变量在某些配置下带 CRLF,私钥一旦有 \r 就会报 error in libcrypto —— 这个坑踩过一次。
-      tr -d '\r' < "$DEPLOY_SSH_KEY" > key
-      SSHOPT="-i key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
+      # 私钥的处理照抄 templates/deploy.yml:去 CRLF、**补结尾换行**、600、再用 ssh-keygen 自检。
+      # 少了结尾换行就会报 error in libcrypto,而那条报错完全看不出是缺一个换行 —— 这次又踩了一遍。
+      mkdir -p ~/.ssh && chmod 700 ~/.ssh
+      tr -d '\r' < "$DEPLOY_SSH_KEY" > ~/.ssh/id_backup
+      printf '\n' >> ~/.ssh/id_backup && chmod 600 ~/.ssh/id_backup
+      ssh-keygen -y -P "" -f ~/.ssh/id_backup >/dev/null || { echo "私钥不可解析"; exit 1; }
+      SSHOPT="-i $HOME/.ssh/id_backup -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
       scp $SSHOPT templates/backup.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/rp-ai-backup.sh"
       ssh $SSHOPT "$DEPLOY_USER@$DEPLOY_HOST" \
         "KEEP_DAYS=${BACKUP_KEEP_DAYS:-7} sh /tmp/rp-ai-backup.sh; rc=\$?; rm -f /tmp/rp-ai-backup.sh; exit \$rc"
