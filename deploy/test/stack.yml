@@ -104,13 +104,16 @@ services:
       start_period: 20s
     deploy:
       replicas: 2
-      # 尽量一台一个:滚动更新后 swarm 不会自己重新平衡,两个副本可能都落在同一台机器上
-      # (实测就是这样),那样"两台机器"这件事就只剩调度自由度,没有冗余。
       placement:
-        preferences: [{spread: node.hostname}]
+        # 一台一个,而且是**约束**不是偏好。原来这里写的是 preferences: spread,注释还写着"尽量一台
+        # 一个"——"尽量"就是问题:滚动更新后两个副本可以都落在同一台,那台一挂服务全没,而界面上仍然
+        # 显示 2/2、不会报警。它没有挂任何卷,所以这个约束不会让它调度不上去。
+        max_replicas_per_node: 1
       restart_policy: {condition: any}
-      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
-      rollback_config: {order: start-first}
+      # stop-first 是被上面那个约束逼出来的:两台各一个副本时,start-first 要先起新任务却没有地方放,
+      # 更新会永远卡在 Pending("no suitable node"),而服务仍显示 2/2,卡住了也看不出来。
+      update_config: {order: stop-first, failure_action: rollback, monitor: 30s, parallelism: 1}
+      rollback_config: {order: stop-first, parallelism: 1}
       resources:
         limits: {cpus: "1.0", memory: 1G}
         reservations: {memory: 128M}
