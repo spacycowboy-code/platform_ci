@@ -144,6 +144,7 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 | `audit-backend` | **1**,且钉老机器 | 持有技能仓的 git 工作副本(`/proj/radio_ivc_rvc_workspace/ezhgmio/rp-ai-skill`,容器内同路径)并往外推送;代码直接把它当读写文件系统用(`Path(skill_repo_path)/…/SKILL.md`),两个副本写同一个工作树会坏 |
 | `audit-reconciler` | **1** | 周期性对账,多副本只是重复做同一件事,还会互相竞争同一批 MR 与数据行 |
 | `audit-judge` | **1**,且钉老机器 | kiro-cli 的登录状态在命名卷里 |
+| `skill-audit`(审计引擎) | **2,一台一个** | 无状态:不挂卷,结果全在响应里返回。用 `placement.max_replicas_per_node: 1` 而不是 `preferences: spread` —— 后者只是偏好,实测滚动更新后两个副本会挤在同一台,那台一挂两副本就是句空话。代价是更新要用 `stop-first`(两台各一个时 `start-first` 无处放新任务,更新会永远 Pending) |
 | `db`(测试环境) | **1**,且钉老机器 | 两个 MySQL 挂同一数据目录会损坏数据 |
 | `grafana` | **1**,可以不钉机器 | 自带的 SQLite 在命名卷里,但**卷里没有不可再生的东西**:看板与数据源由文件下发,admin 由环境变量创建,0 条告警规则、0 条标注(22 张非空表逐张查过)。前提是把配置改成 docker config 下发(bind mount 的宿主目录只存在于 manager),并且看板以文件为准 |
 

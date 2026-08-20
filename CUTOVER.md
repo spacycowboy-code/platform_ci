@@ -30,7 +30,8 @@
 | `frontend` | ✅ | 只有静态文件。但它占着 9001,所以放最后 |
 | `grafana` | ❌ | 两个实例挂同一个命名卷会互相破坏。但卷里没有不可再生的东西(见 PLATFORM.md),所以它也可以改成无卷 + 配置用 docker config 下发,那样就不必钉机器 |
 | `rtep-flow-manager` | ❌ | 业务数据是本地 SQLite(`/proj/rp_ait_prod/data/rtep-flow-manager` → `/app/data/rtep_flow.db`),两个进程写同一个文件会锁冲突甚至损坏 |
-| `audit-backend` + `audit-reconciler` + `audit-judge` | ❌ | 后端持有技能仓 git 工作副本并往外推送;判定器的 kiro 登录在命名卷里。而且后端按服务名找判定器(`audit-judge:8790`),**三个必须同一批搬** |
+| `audit-backend` + `audit-reconciler` + `audit-judge` | ❌ | 后端持有技能仓 git 工作副本并往外推送;判定器的 kiro 登录在命名卷里。这两条必须同一批搬 |
+| `skill-audit`(审计引擎) | ✅ | 无状态,可以先搬、也可以两副本跨节点。**但它必须在后端之前就位** —— 后端镜像里已经没有扫描器,审计全靠调它;顺序反了的话每次上传都拿不到结论,新上传全部转人工复核、重发布已上线技能返回 503。后端不再直接找判定器,链路是 后端 → 引擎 → 判定器 |
 
 所以顺序是:**能并行的先搬(零中断)→ 不能并行的各自开窗口 → 前端最后(它一动就是入口切换)**。
 

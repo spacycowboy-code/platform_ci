@@ -103,7 +103,11 @@ JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users`
 `172.16.0.0/16`,因为默认的 `10.0.0.0/8` 与 Artifactory、apt 镜像、Sonar 的内网地址冲突。
 
 **测试环境已经全量跑在集群上**:入口 Traefik、前端 2 副本(两台各一)、审计后端/判定器/数据库
-钉在老机器(数据在它的硬盘上)、对账器 1 副本。
+钉在老机器(数据在它的硬盘上)、对账器 1 副本、审计引擎 2 副本(两台各一,无状态)。
+
+测试环境同时也是**审计拆分之后**的形态:后端镜像里不再装第三方扫描器,审计通过 HTTP 调用独立的
+`skill-audit` 服务;引擎与判定器两个镜像都由新仓 `rp-ai-miao/skill-audit` 构建。已知可用的一组标签存在
+`deploy/test/releases/after-audit-split.env`。
 
 **生产还没切**,步骤与回退见 [CUTOVER.md](CUTOVER.md)。
 
