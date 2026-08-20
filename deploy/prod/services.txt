@@ -14,3 +14,4 @@ rp-ai-portal-be: compose audit-backend audit-reconciler
 skill-audit-judge: compose audit-judge
 rp-ai-portal-fe: compose frontend
 eridoc-client: compose eridoc-client
+skill-audit: compose skill-audit
