@@ -187,7 +187,9 @@ services:
     networks: [inner]
     env_file: [audit-test.env]
     environment:
-      AUDIT_JUDGE_URL: "http://audit-judge:8790"
+      # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
+      # http://audit-judge:8790/v1)。这里原来有一行 AUDIT_JUDGE_URL,两个仓的代码都没有这个字段,
+      # 门户读不到它 —— 留着只会让人以为改它有用。
     volumes:
       # 技能仓工作副本、日志、推送私钥都在这台机器的硬盘上
       - /home/eniuiqr/audit-data/skillrepo:/data/skillrepo
