@@ -47,6 +47,27 @@ check-templates:
           print(f"{p}: 输入 {len(inputs)} 个(必填 {len(required)}: {required}),任务 {names}")
       sys.exit(bad)
       PY
+    # 缓存清理工具的判断逻辑(选谁删、敢不敢删)也在这里过一遍,不联网。
+    - python3 tools/test_prune_build_cache.py
+
+# 缓存仓只会长,不会缩:kaniko 的 --cache-ttl(默认 336h)过期后只是不再采用,不会删。
+# 这个任务按**最后一次被命中的时间**清理,理由与取舍见 tools/prune_build_cache.py 的开头。
+#
+# 只在定时流水线里跑,且默认是报告模式 —— 要真删得把 PRUNE_APPLY 设成 true(定时计划里设)。
+# 这样手工点一下流水线不会误删,而删错的后果也只是下一次构建缓存未命中。
+prune-build-cache:
+  stage: check
+  image: $REGISTRY/dockerhub-ericsson-remote/python:3.12-slim
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $PRUNE_CACHE == "true"'
+  script:
+    - |
+      : "${docker_user:?未设置}"; : "${docker_password:?未设置}"
+      if [ "${PRUNE_APPLY:-false}" = "true" ]; then
+        python3 tools/prune_build_cache.py --keep-days "${PRUNE_KEEP_DAYS:-30}" --apply
+      else
+        python3 tools/prune_build_cache.py --keep-days "${PRUNE_KEEP_DAYS:-30}"
+      fi
 
 publish-base:
   stage: publish
