@@ -26,10 +26,11 @@ services:
     restart: unless-stopped
     env_file:
       - audit-test.env
-    environment:
-      # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
-      # http://audit-judge:8790/v1)。这里原来有一行 AUDIT_JUDGE_URL,两个仓的代码都没有这个字段,
-      # 门户读不到它 —— 留着只会让人以为改它有用。
+    # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
+    # http://audit-judge:8790/v1)。这里原来有一行 AUDIT_JUDGE_URL,两个仓的代码都没有这个字段,
+    # 门户读不到它 —— 留着只会让人以为改它有用。删掉它之后 environment 下没有任何一项了,所以
+    # environment: 这个键也必须一起删 —— 空的 environment 是合法 YAML,但 compose 会报
+    # "must be a mapping",而它是在部署时才报,把所有人的部署都挡住。
     ports:
       - "9100:8000"
     volumes:
