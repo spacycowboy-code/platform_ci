@@ -69,10 +69,16 @@ services:
     deploy:
       replicas: 2
       placement:
-        preferences: [{spread: node.hostname}]
+        # 约束,不是偏好。preferences: spread 只是"倾向于分开",实测滚动更新之后两个副本可以都落在
+        # 同一台 —— 那台一挂服务就全没了,而界面上仍然显示 2/2,不会报警。审计引擎上就撞见过一次。
+        # 它没有挂任何卷,所以两台都能跑,这个约束不会让它调度不上去。
+        max_replicas_per_node: 1
       restart_policy: {condition: any}
-      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
-      rollback_config: {order: start-first}
+      # stop-first 是被 max_replicas_per_node 逼出来的:两台各一个副本时,start-first 要先起新任务却
+      # 没有地方放,更新会永远卡在 Pending("no suitable node"),而服务显示还是 2/2 —— 所以卡住了也
+      # 看不出来。代价是更新期间有一小段只有单副本。
+      update_config: {order: stop-first, failure_action: rollback, monitor: 30s, parallelism: 1}
+      rollback_config: {order: stop-first, parallelism: 1}
       resources:
         limits: {cpus: "0.5", memory: 256M}
         reservations: {memory: 64M}
