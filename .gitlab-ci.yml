@@ -176,6 +176,33 @@ deploy-grafana-config:
   before_script:
     - apk add --no-cache openssh-client rsync
 
+# 备份门户自己的事实表。只在定时流水线里跑(手工也能点,见 rules)。
+#
+# 为什么是定时流水线而不是机器上的 cron:两台机器的 crontab 都是空的 —— 也就是说 cron 这条路上没人
+# 留下过任何东西,放进去也没人会发现。这里有运行记录、失败会通知、脚本在 git 里能被评审,而且它和
+# 已有的"每周清缓存"排在同一个地方,找运维相关的东西的人会看到。
+#
+# 产物**不进 artifact**:里面有用户 EID 与姓名,artifact 是所有能看流水线的人都能下载的。备份只留在
+# 目标机器的 700 目录里。恢复步骤见 README 的"备份与恢复"。
+backup-portal-facts:
+  stage: check
+  extends: .release-base
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $BACKUP == "true"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  script:
+    - |
+      : "${DEPLOY_SSH_KEY:?未设置}"; : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
+      install -m 600 /dev/null key
+      # File 变量在某些配置下带 CRLF,私钥一旦有 \r 就会报 error in libcrypto —— 这个坑踩过一次。
+      tr -d '\r' < "$DEPLOY_SSH_KEY" > key
+      SSHOPT="-i key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes"
+      scp $SSHOPT templates/backup.sh "$DEPLOY_USER@$DEPLOY_HOST:/tmp/rp-ai-backup.sh"
+      ssh $SSHOPT "$DEPLOY_USER@$DEPLOY_HOST" \
+        "KEEP_DAYS=${BACKUP_KEEP_DAYS:-7} sh /tmp/rp-ai-backup.sh; rc=\$?; rm -f /tmp/rp-ai-backup.sh; exit \$rc"
+
 capture-release:
   extends: .release-base
   rules:
