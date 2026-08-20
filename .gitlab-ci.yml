@@ -232,6 +232,19 @@ apply-release:
       ENV_DIR="deploy/$RELEASE_ENV"
       FILE="$ENV_DIR/releases/$RELEASE.env"
       test -f "$FILE" || { echo "$FILE 不存在"; exit 1; }
+      # 文件头里的环境必须与要重放的环境一致。采集任务默认采 test(变量名是 RELEASE_ENV),
+      # 传错名字它会静默采出一份 test 的标签;那份文件被存进 deploy/prod/releases/ 之后,
+      # 重放就会把测试环境的镜像部署到生产。文件路径拦不住这个错,只有内容能。
+      CAPTURED="$(sed -n 's/^#.*环境=\([a-z]*\).*/\1/p' "$FILE" | head -1)"
+      if [ -z "$CAPTURED" ]; then
+        echo "$FILE 的头部没有『环境=<名字>』那一行,无法确认它采自哪个环境。"
+        echo "capture-release 的输出自带这一行,请不要手工删掉它。"; exit 1
+      fi
+      if [ "$CAPTURED" != "$RELEASE_ENV" ]; then
+        echo "拒绝重放:这份版本集合采自 $CAPTURED,而你要重放到 $RELEASE_ENV。"
+        echo "两个环境的镜像标签不一样,照着放会把 $CAPTURED 的版本部署到 $RELEASE_ENV。"; exit 1
+      fi
+      echo "版本集合采自 $CAPTURED,与目标环境一致"
       echo "要重放的版本集合:"; grep -vE '^\s*(#|$)' "$FILE" | sed 's/^/  /'
       PAIRS="$(grep -vE '^\s*(#|$)' "$FILE" | sed 's/#.*//' | tr -d ' ' | tr '\n' ' ')"
       [ -n "$PAIRS" ] || { echo "$FILE 里没有 变量名=标签"; exit 1; }
