@@ -188,6 +188,12 @@ backup-portal-facts:
   stage: check
   extends: .release-base
   rules:
+    # 第一条必须是"部署流水线里不要出现" —— 被服务仓触发的部署流水线也跑在 main 上,如果这里只写
+    # CI_COMMIT_BRANCH == "main",这个手动任务就会出现在**每一条部署流水线**里;而它在 check 阶段,
+    # deploy 阶段的 apply 会因此永远不开始。实际后果:所有人的部署都卡住,而服务仓那边只看到
+    # deploy-test 成功、线上没换。capture-release 与 apply-release 早就有这条守卫,我漏了。
+    - if: '$DEPLOY_ENV'
+      when: never
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $BACKUP == "true"'
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
