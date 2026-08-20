@@ -132,7 +132,11 @@ services:
     deploy:
       replicas: 2
       placement:
-        preferences: [{spread: node.hostname}]
+        # preferences 只是**偏好**:实测滚动更新之后两个副本都落在了 manager 上,那一台一挂引擎就全没
+        # 了,两副本白给。max_replicas_per_node 是约束,两台两副本正好一台一个。
+        # 代价说清楚:一台下线时第二个副本会一直 pending 调度不上去 —— 这是想要的,剩下那个照常服务,
+        # 而挤在一起才是把"两副本"变成一句空话。
+        max_replicas_per_node: 1
       restart_policy: {condition: any}
       update_config: {order: start-first, failure_action: rollback, monitor: 30s}
       rollback_config: {order: start-first}
