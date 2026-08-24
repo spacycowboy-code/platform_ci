@@ -123,7 +123,7 @@ grafana 的库在命名卷里。**要多副本,得先把这些状态外置,那�
 (Traefik)发布一个端口。服务之间按服务名互相访问(`http://audit-backend:8000`),端口由镜像
 自己决定,外部无从依赖。
 
-所以"动态分配"不是分配算法,而是**外部不再需要知道端口**。
+所以"动态分配"要解决的是**外部不再需要知道端口**,不是端口怎么挑。
 
 ### ✅ 按 API 路径转发到对应服务
 
@@ -219,6 +219,7 @@ backlog,0 处 opentelemetry / jaeger / zipkin。
 | 生产 `*.env` 是 `-rw-rw-r--`(任何登机用户可读数据库/JWT/LDAP 口令);部署目录含 `prod-env` 是 `777`,可写 | 属主 `ezhgmio`。`chmod 640 *.env` + `chmod 750` |
 | psi 仓 git 历史里两个密钥要轮换:`nacos_ml_vem.yml`(ml-vem 生产库口令)、`secrets.yml`(Azure client_secret) | 密钥持有方。清历史无用,凭据已泄露 |
 | 上传报告不发 `clear`,上传者分不清"查过是干净的"和"根本没查";前端三处分支等着 | 产品定显示哪几项检查(共 25 项)。同时挡着重复性那一行的呈现 |
+| 构建器 kaniko 上游已归档,替代方案 BuildKit rootless 起不来(宿主机关了非特权用户命名空间,是组织加固基线)。三个选项与实测证据见 [BUILDER.md](BUILDER.md) | 要 runner 宿主机维护者放开 `kernel.unprivileged_userns_clone`,或走安全例外 |
 | 生产还是单机(集群里 `prod_` 服务数 0) | 后端挂着共享工作副本 + 推送私钥,换机器起不来。先做门户仓 `.kiro/specs/skill-audit/repo-access.md` |
 
 已完成,勿重复提:`frontend`、`product-structure-information`、`skill-audit` 均已加

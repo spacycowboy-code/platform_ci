@@ -2,6 +2,31 @@
 
 服务仓维护者只需要这一份。改动流水线本身见 [PLATFORM.md](PLATFORM.md);构建器为什么是现在这个见 [BUILDER.md](BUILDER.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
 
+## 接一个新服务
+
+这件事有两半。第一半你自己做,第二半在这个仓里,你没有权限,提一个 MR 或者找 platform-ci 的维护者。
+只做第一半的话,流水线能跑、镜像能推,但**不会部署** —— 服务还没出现在环境描述里。
+
+**你的仓里(第一半)**
+
+1. `.gitlab-ci.yml` 写 include(见下面「你仓里的那个文件」)。
+2. 容器内监听 **8000**。
+3. 提供一个**免鉴权**的健康端点。路径不必是 `/health` —— `eridoc-client` 用的是 `/api/health`,
+   探测哪个路径写在环境描述里,不用改你的服务。
+
+**这个仓里(第二半,每个要上的环境都要做一遍)**
+
+| 改哪 | 加什么 |
+|---|---|
+| `deploy/<环境>/stack.yml`(集群)或 `compose.yml`(单机) | 一段 `services:`:镜像、宿主机端口、挂载、`healthcheck`。多副本再加 `deploy.replicas` 和 `placement.max_replicas_per_node: 1` |
+| `deploy/<环境>/services.txt` | 一行 `<镜像名>: swarm` 或 `<镜像名>: compose <compose 服务名…>`。这一行是"部署这个镜像在这个环境里意味着什么"的唯一依据 |
+| `deploy/<环境>/env-files.txt` | 要密钥或配置才加:`<文件名>.env=<CI 变量名>[=swarm]`,变量本身在 platform-ci 的 CI 变量里建(File 类型) |
+
+提 MR 的时候把这些说清楚就够了:服务名(也是镜像名)、要上哪些环境、宿主机端口、健康端点路径、
+要不要挂目录、要哪些环境变量或密钥、要几个副本。
+
+细节和踩过的坑见 [PLATFORM.md](PLATFORM.md)。
+
 ## 一次发布经过哪些环节
 
 | 步 | 在哪发生 | 做什么 |
