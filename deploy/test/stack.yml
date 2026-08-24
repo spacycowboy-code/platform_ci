@@ -217,9 +217,13 @@ services:
       start_period: 20s
     deploy:
       replicas: 1
-      placement: *pin
+      # 不再钉机器。原来钉在 node-100-77-162-66 上是因为技能仓的工作副本和推送私钥都在那台
+      # 机器的硬盘上;内容改成按引用走 GitLab 接口读写、两个挂载去掉之后,这个服务没有本地
+      # 状态了(只剩日志挂载,而日志本来就是每个副本各自的)。db 与 audit-judge 仍然要钉:
+      # MySQL 的数据目录和判定器的登录态确实在那台机器上。
       restart_policy: {condition: any}
-      update_config: {order: stop-first}   # 有 bind mount,不能两个副本同时写
+      # 没有本地状态,新旧副本可以并存,滚动时不必先断服务
+      update_config: {order: start-first}
       resources:
         limits: {cpus: "2.0", memory: 2G}
 
