@@ -89,9 +89,8 @@ routing mesh 的语义是:**只要有服务发布了端口,集群里每个节点
 
 ### 版本的真相在集群里,不在 `.env`
 
-`stack deploy` 会把 tag 解析成 digest 存进服务定义(实测:`:71a0ba5a@sha256:1e2a2831…`)。所以
-"现在跑的是哪个镜像"由 `docker service inspect` 回答,不再由部署机的 `.env` 回答 —— 版本集合的
-快照要从集群状态抓,抓 `.env` 在 swarm 下取到的不是真相。
+`stack deploy` 把 tag 解析成 digest 存进服务定义(实测 `:71a0ba5a@sha256:1e2a2831…`)。所以在 swarm
+下"现在跑的是哪个镜像"要问 `docker service inspect`,版本快照也要从集群状态抓,不能抓 `.env`。
 
 ### 从 compose 搬到 stack:四个撞过的坑
 
@@ -109,18 +108,10 @@ routing mesh 的语义是:**只要有服务发布了端口,集群里每个节点
 * **swarm 不会重新平衡已在运行的任务**。副本落在哪台就留在哪台,要 `service update --force`
   才重新调度。所以"负载均衡"不是部署完自动成立的。
 
-### 搬迁顺序:边缘代理必须最先
+### 搬迁顺序
 
-compose 世界和 swarm 世界的服务**不能按名字互访**。前端(compose)靠 `host.docker.internal:9010`
-找 psi;psi 一旦搬进 swarm 且不发布端口,前端立刻找不到它,而让它发布 9010 又会和老机器上正在跑的
-psi 撞车(routing mesh)。所以顺序只能是:
-
-1. Traefik 进 swarm 发布 80,路由**先指向现有的 compose 服务**(主机:端口)。不动任何现有容器
-2. 逐个把无状态服务搬进 swarm,同时把那条路由从"主机:端口"改成服务名 —— 用户无感
-3. 最后搬前端;它的 nginx 只剩静态文件,路由全归 Traefik
-
-两套环境都想要 80,而 ingress 模式下同一集群不能重复发布同一端口。在拿到 DNS 名之前:
-**PROD 用 80,TEST 用 8080**;有了域名再按域名合成一个 Traefik。
+顺序、每个服务能不能并行搬、以及两套环境都想要 80 端口怎么办,都在
+[CUTOVER.md](CUTOVER.md) —— 那是一次性操作手册,切完就删,不在这里重复一份。
 
 ### 集群上的一次性主机准备
 
@@ -141,7 +132,7 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 | 前端 | **2,一台一个** | 只有静态文件。同样用 `max_replicas_per_node: 1` + `stop-first`,理由见下面 psi 那一行 |
 | `product-structure-information` | **2,一台一个** | 产品结构缓存在**共享数据库表** `product_struct_cache`,不是容器本地磁盘,所以副本之间答案一致。曾经还有一层磁盘缓存,是死代码(无任何调用者;生产容器跑了数周该目录 0 个文件),已删除。集群里的声明**不挂任何卷**,所以两台都能跑;生产那份 compose 还挂着日志目录 `/proj/rp_ait_prod/logs/…`(单机上无妨),搬上集群时要一并去掉 —— 那个路径只在老机器上 |
 | `rtep-flow-manager` | **1**,且钉老机器 | 全部业务数据是一个本地 SQLite 文件(`/app/data/rtep_flow.db`)。两个进程写同一个 SQLite 会锁冲突甚至损坏 |
-| `audit-backend` | **1**,且钉老机器 | 持有技能仓的 git 工作副本(`/proj/radio_ivc_rvc_workspace/ezhgmio/rp-ai-skill`,容器内同路径)并往外推送;代码直接把它当读写文件系统用(`Path(skill_repo_path)/…/SKILL.md`),两个副本写同一个工作树会坏 |
+| `audit-backend` | **1**,且钉老机器 | 代码已经不依赖工作副本(门户仓 !54,内容改成按引用读写 GitLab),但环境描述里还挂着技能仓工作副本和 ssh 私钥两个目录。删掉这两个挂载之后它就能多副本 —— 那是这个仓里的改动 |
 | `audit-reconciler` | **1** | 周期性对账,多副本只是重复做同一件事,还会互相竞争同一批 MR 与数据行 |
 | `audit-judge` | **1**,且钉老机器 | kiro-cli 的登录状态在命名卷里 |
 | `skill-audit`(审计引擎) | **2,一台一个** | 无状态:不挂卷,结果全在响应里返回。用 `placement.max_replicas_per_node: 1` 而不是 `preferences: spread` —— 后者只是偏好,实测滚动更新后两个副本会挤在同一台,那台一挂两副本就是句空话。代价是更新要用 `stop-first`(两台各一个时 `start-first` 无处放新任务,更新会永远 Pending) |
@@ -378,6 +369,79 @@ glab api --method PUT runners/581505 -f paused=false
 触发部署的入口留在服务仓——共享的是过程与环境事实,不是入口。
 
 不做灰度、多副本、跨机编排、按分支自动分环境。
+
+## 备份与恢复
+
+每天一条定时流水线(`backup-portal-facts`)把**门户自己的事实表**导出来,并且当场验证这份备份能恢复。
+在 GitLab 的 Schedules 页面能看到它,和「每周清缓存」排在一起。
+
+**备份什么、不备份什么。** 备份的对象是「只此一份的事实」:审计记录与发现(判定器不是确定性的,重跑
+得不到同样的结论)、用户、下载量、收藏、评论、评分。**不备份能重算的东西** —— 技能内容在技能仓的
+git 里,`status` 靠对账器从 MR 状态重算,别的团队在同一个库里的 29 张表(405 MB)不是我们该持有的。
+表名不写死,按 `rp_ai_` 前缀在运行时取,所以**新表必须沿用这个前缀**,否则不会被备份。
+
+**验收标准是恢复成功,不是文件存在。** 每次导完都灌进一个一次性的 MySQL 容器、逐表比对行数,
+不一致就让流水线失败并删掉那份坏备份。备份最常见的失败方式是出事那天才发现 dump 是空的。
+
+**放在哪。** 目标机器的 `/proj/rp_ait_prod/backup`,700 目录、600 文件,保留 7 天。**产物不进 CI
+artifact** —— 里面有用户 EID 与姓名,而 artifact 是所有能看流水线的人都能下载的。保留期短也是同一个
+理由:多留一天就是多一天的个人数据副本。
+
+### 怎么恢复
+
+```bash
+ssh <目标机器>
+ls -lh /proj/rp_ait_prod/backup/            # 挑一份
+gunzip -c /proj/rp_ait_prod/backup/portal-facts-<时间戳>.sql.gz > /tmp/restore.sql
+
+# 先恢复到一个一次性容器里看清楚,不要直接往生产库灌
+docker run -d --name restore-check -e MYSQL_ALLOW_EMPTY_PASSWORD=yes mysql:8.0
+# 等真服务器起来:初始化阶段那个临时服务器只监听 socket,所以判就绪必须走 TCP
+until docker exec restore-check mysql --protocol=TCP -h 127.0.0.1 -e "select 1"; do sleep 2; done
+docker exec restore-check mysql --protocol=TCP -h 127.0.0.1 -e "create database verify"
+docker exec -i restore-check mysql --protocol=TCP -h 127.0.0.1 verify < /tmp/restore.sql
+docker rm -f restore-check    # 看完就删
+```
+
+往生产库恢复要**点名表**,不要整份灌:那个库里还有别的团队的 29 张表。dump 里每张表前面都有
+`DROP TABLE IF EXISTS`,所以整份灌等于把我们这 18 张表回到备份时刻 —— 这通常就是想要的,但**先确认
+没有别的服务正在写**。
+
+### 这套备份救得了什么、救不了什么
+
+生产库是外部共享集群(`vem-staging-mysql`,端口 6446 是 MySQL Router,背后是 InnoDB Cluster),
+开着 binlog 与 GTID、保留 7 天。所以:
+
+| 故障 | 谁能救 |
+|---|---|
+| 机器坏、集群挂 | **集群管理员**的备份与 binlog。我们的账号只有那一个库的权限,自己碰不到 |
+| 我们自己写坏数据(一次错的迁移、误删一批行) | **只有这份导出**。指望集群备份意味着开单等人,而且他们只会整库回滚 —— 为了我们那几十行把别人 405 MB 的表一起回滚,不会有人同意 |
+
+第二种更常发生,而且只有我们能自救。**第一种至今没有确认过**:要问库的归属方「你们对 `vem-staging`
+做定期全量备份吗、保留多久、怎么申请恢复」。注意生产数据放在一个名字带 staging 的库里,如果他们按
+名字把它当非关键环境,那第一种故障其实没人兜底。
+
+### 判定器的登录态不在备份里
+
+判定器那个卷 175 MB,但要紧的只有 `auth_kv` 两行,而它**可以由人重新登录恢复**:
+
+```bash
+docker exec -it <判定器容器> kiro-cli login     # 设备码流程,跟着提示走
+```
+
+其余 4501 行是历史对话,丢了没影响。所以这里不搬 175 MB,只留这条命令。
+
+## 改 grafana 看板
+
+看板文件在 `deploy/<环境>/grafana/dashboards/`,数据源与看板由文件下发。
+
+**现在真相源没定,改看板有丢的风险。** `allowUiUpdates: true`,浏览器里的改动只存在 grafana 的数据卷
+里,不回写本仓库;卷一重建就悄悄变回文件里的样子。已经分叉过一次(8-06 有人把三个面板从 barchart 改成
+table 并重排布局,已导出到 `dashboards/skill-metrics.json`,现在两边一致)。
+
+改成 `false` 实测过:由文件下发的看板保存会 400,新建看板和另存副本不受影响。但现在不能开,因为
+`grafana` 不在 `services.txt` 里,没有任何流水线同步它的配置或重启它(现在是手工 scp)。要先补同步任务
+才谈得上"改文件 → 提交 → 点一下"。见 [ROADMAP.md](ROADMAP.md) 的待办。
 
 ## 待别人处理
 
