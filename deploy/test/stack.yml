@@ -204,10 +204,10 @@ services:
     # environment: 这个键也必须一起删 —— 空的 environment 是合法 YAML,但 compose 会报
     # "must be a mapping",而它是在部署时才报,把所有人的部署都挡住。
     volumes:
-      # 技能仓工作副本、日志、推送私钥都在这台机器的硬盘上
-      - /home/eniuiqr/audit-data/skillrepo:/data/skillrepo
+      # 只剩日志。技能仓的工作副本和推送私钥都去掉了:内容按引用走 GitLab 接口读写,鉴权是一个
+      # 项目访问令牌。少了这两个挂载,这个服务就没有本地状态,可以在任意一台机器上起来 ——
+      # 这才是那次重构的目的。按 sha 的内容缓存在容器本地(/tmp),丢了下次重取,不能挂出来。
       - /home/eniuiqr/audit-data/logs:/app/logs
-      - /home/eniuiqr/audit-data/ssh:/root/.ssh
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
