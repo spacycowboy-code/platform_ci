@@ -217,7 +217,7 @@ MySQL Router:**6446 是读写口(指向主),6447 是只读口(指向副本)**。
 
 **有状态的服务不能与 compose 版本并行叠加。** 两个 MySQL 挂同一个数据目录会损坏数据,git 工作副本、
 判定器登录卷同理。所以这些服务的切换必须"先停 compose 再起集群",**有一个停机窗口**(测试环境实测
-约 40 秒)。无状态的服务可以并行跑、逐个切路由,那才是无损的。
+约 40 秒)。无状态的服务可以并行跑、逐个切路由,这样才没有停机。
 
 **在已有 swarm 服务上改发布端口,ingress 映射不会刷新。** 现象最坑:配置是对的、容器内部确实在听、
 `service inspect` 里发布端口也对,但外面连不上,日志没有任何报错。必须 `docker service rm <服务>`
@@ -266,15 +266,15 @@ swarm 的 config 不可变,所以改配置要换名字。**不要用手工版本
 
 ## 加一个服务
 
-服务仓写 `.gitlab-ci.yml`(见 README),提供一个免鉴权的健康端点;在需要的环境描述里加一段
-`services:`(镜像、`container_name`、宿主机端口、挂载),容器内统一监听 8000;在 `services.txt` 加
-映射;要密钥就加 File 变量并写进 `env-files.txt`。
+清单在 [README 的「接一个新服务」](README.md#接一个新服务),那份是给服务作者看的,这里只记维护侧要
+注意的:
 
-健康端点的路径不必是 `/health`:`eridoc-client` 是 `/api/health`,写在它自己那段的 `healthcheck` 里
-就行 —— 端点路径是服务的事实,探测方式是环境的事实。
-
-服务仓已有自己特有的检查时,和 include 并存即可(`eridoc-client` 保留了 `openapi-in-sync`,用模板
-提供的 `$BASE_IMAGE`,不必再拉一个 python 镜像)。
+* 健康端点的路径由服务决定,探测方式写在环境描述里。所以不要求服务改成 `/health`
+  (`eridoc-client` 是 `/api/health`)。
+* 服务仓已有自己特有的检查时,和 include 并存即可。`eridoc-client` 保留了 `openapi-in-sync`,
+  用模板提供的 `$BASE_IMAGE`,不必再拉一个 python 镜像。
+* `services.txt` 里那一行是这个镜像在这个环境里的部署方式的唯一依据,不要靠"stack.yml 里有没有它"
+  去推断:迁移期间同一个服务会同时出现在两个文件里。
 
 ## 加一个环境
 
