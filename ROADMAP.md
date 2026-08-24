@@ -111,11 +111,10 @@ JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users`
 
 **生产还没切**,步骤与回退见 [CUTOVER.md](CUTOVER.md)。
 
-**负载均衡现在对前端、psi、审计引擎成立**(各 2 副本、一台一个);剩下的还不行,这一条要跟需求方对齐预期。逐个服务查过(表在
-[PLATFORM.md](PLATFORM.md)):psi 的产品结构缓存在共享数据库里、可以多副本,但它的日志用
-bind mount 写 `/proj/rp_ait_prod/logs/…`,而这个路径只在老机器上;`rtep-flow-manager` 全部业务
-数据是一个本地 SQLite 文件;审计后端持有技能仓的 git 工作副本;判定器的登录状态在命名卷里;
-grafana 的库在命名卷里。**要多副本,得先把这些状态外置,那是服务侧的改动。**
+**负载均衡现在对前端、psi、审计引擎成立**(各 2 副本、一台一个),剩下的还不行,这一条要跟需求方对齐
+预期。每个服务能不能多副本、依据是什么,逐个查过,表在 [PLATFORM.md](PLATFORM.md)。卡住的原因分两类:
+本地状态要服务侧改(rtep 的 SQLite、判定器的登录卷、grafana 的库),或者环境描述里的挂载要删(审计后端
+的代码已经不依赖工作副本了,挂载还在)。
 
 ### ✅ 端口动态分配
 
@@ -220,7 +219,8 @@ backlog,0 处 opentelemetry / jaeger / zipkin。
 | psi 仓 git 历史里两个密钥要轮换:`nacos_ml_vem.yml`(ml-vem 生产库口令)、`secrets.yml`(Azure client_secret) | 密钥持有方。清历史无用,凭据已泄露 |
 | 上传报告不发 `clear`,上传者分不清"查过是干净的"和"根本没查";前端三处分支等着 | 产品定显示哪几项检查(共 25 项)。同时挡着重复性那一行的呈现 |
 | 构建器 kaniko 上游已归档,替代方案 BuildKit rootless 起不来(宿主机关了非特权用户命名空间,是组织加固基线)。三个选项与实测证据见 [BUILDER.md](BUILDER.md) | 要 runner 宿主机维护者放开 `kernel.unprivileged_userns_clone`,或走安全例外 |
-| 生产还是单机(集群里 `prod_` 服务数 0) | 后端挂着共享工作副本 + 推送私钥,换机器起不来。先做门户仓 `.kiro/specs/skill-audit/repo-access.md` |
+| grafana 看板的真相源没定:`allowUiUpdates: true`,界面上的改动不回写仓库,卷重建就丢(已分叉过一次)。收紧的前提是先有同步任务 —— `grafana` 现在不在 `services.txt` 里,没有流水线管它 | 我们自己,一个手动同步任务 |
+| 生产还是单机(集群里 `prod_` 服务数 0) | 门户的代码已经不依赖工作副本(!54),现在卡在这个仓:环境描述里那两个挂载(技能仓工作副本、ssh 私钥)要删,生产的令牌要从个人令牌换成项目访问令牌。步骤见 [CUTOVER.md](CUTOVER.md) |
 
 已完成,勿重复提:`frontend`、`product-structure-information`、`skill-audit` 均已加
 `max_replicas_per_node: 1`,两副本实测分处两台。`preferences: spread` 只是偏好,单靠它滚动更新后会挤在
