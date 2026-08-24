@@ -87,6 +87,16 @@ services:
     container_name: ai-portal-be-backend
     restart: unless-stopped
     env_file:
+      # 这份文件由部署任务从 File 变量 AUDIT_PROD_ENV 投放,不进 git。除库、LDAP、JWT 之外,
+      # 从 rp-ai-portal-be v1.5.0 起还需要一项:
+      #
+      #   GITLAB_USER_AGENTS_TOKEN  用户上传的 Agent 包要在 rp-ai/rp-ai-user-agents 下建项目
+      #                             并推送,用的是**那个组的** group access token
+      #                             (Owner + api,write_repository),不是同一份文件里的
+      #                             GITLAB_TOKEN —— 后者是全域只读,只用来同步另外两个组。
+      #
+      # 缺了它不会崩:zip 上传答 503 并说明未配置凭据,市场其余功能照常。也就是说症状是
+      # "某个功能一直 503",而不是启动失败 —— 所以写在这里,否则没人会想到是环境变量。
       - ai-portal-be.env
     environment:
       # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
