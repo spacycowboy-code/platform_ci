@@ -6,7 +6,7 @@
 每个密钥配在哪、到期、失效了什么会坏见 [CREDENTIALS.md](CREDENTIALS.md);
 构建器为什么是现在这个见 [BUILDER.md](BUILDER.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
 
-## 镜像仓库换空间了(2026-08-26)
+## 镜像仓库
 
 镜像推到我们自己的空间:
 
@@ -14,13 +14,9 @@
 armdocker.rnd.ericsson.se/proj-rp-ps-ai/<服务>:<commit sha>
 ```
 
-原来用的是 `proj-rvc` —— RVC 项目的 Artifactory 空间,账号也是他们的 CI 服务账号 `rvccie`,
-两者都不属于我们,已经停用。
+生产与测试在跑的每个标签在这个空间里都有。旧空间 `proj-rvc/rp-ai/`(RVC 项目的)不再使用。
 
-换的时候没有重建任何服务:生产与测试在跑的镜像都从旧空间**按相同 digest 原样推到新空间**,
-再重放一次版本集合。线上的二进制和换之前完全一样,只是镜像引用的路径变了。
-
-当前推镜像用的是**个人账号**而不是服务账号,见 [CREDENTIALS.md](CREDENTIALS.md)。
+推镜像用的账号不是服务账号 —— 口令一变所有仓的构建与部署同时断,见 [CREDENTIALS.md](CREDENTIALS.md)。
 
 ## 接一个新服务
 
