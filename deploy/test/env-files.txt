@@ -2,3 +2,5 @@
 audit-test.env=AUDIT_TEST_ENV=swarm
 product-structure-information.env=PSI_TEST_ENV=swarm
 skill-audit.env=SKILL_AUDIT_TEST_ENV=swarm
+sequence-diagram.env=SEQUENCE_DIAGRAM_TEST_ENV=swarm
+

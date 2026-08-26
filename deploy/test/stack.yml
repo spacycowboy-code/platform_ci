@@ -158,6 +158,36 @@ services:
         limits: {cpus: "2.0", memory: 2G}
         reservations: {memory: 256M}
 
+  # 时序图工具的引擎(仓库 rp-ai-miao/sequence_diagram)。自然语言 → PlantUML → SVG。
+  # 无状态:不挂卷、不写盘,SVG 全在响应里返回,所以和 skill-audit 一样两副本一台一个。
+  # 它自己不持有模型凭据,通过 LLM_API_BASE 指向下面的 sequence-diagram-judge。
+  sequence-diagram:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/sequence-diagram:${SEQUENCE_DIAGRAM_TAG}
+    networks: [inner]
+    env_file: [sequence-diagram.env]
+    healthcheck:
+      # 只证明进程活着。刻意不探判定器 —— 探它要真跑一次 ACP(几十秒、花配额),而健康检查失败
+      # 会让编排换掉容器:判定器登录态失效时不该连带把好的引擎副本重启一遍。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    deploy:
+      replicas: 2
+      placement:
+        # 和 skill-audit 同样的理由:preferences 只是偏好,实测滚动更新后两副本会挤在同一台。
+        max_replicas_per_node: 1
+      restart_policy: {condition: any}
+      # stop-first:两台两副本 + 每台最多一个 = start-first 时新任务无处可放,更新永远 Pending。
+      update_config: {order: stop-first, failure_action: rollback, monitor: 30s, parallelism: 1}
+      rollback_config: {order: stop-first, parallelism: 1}
+      resources:
+        # 渲染是一个 java 子进程(plantuml.jar),一次生成的上限 30 秒。JVM 起停是主要开销。
+        limits: {cpus: "2.0", memory: 2G}
+        reservations: {memory: 256M}
+
   audit-reconciler:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}
     networks: [inner]
@@ -243,6 +273,35 @@ services:
       resources:
         limits: {cpus: "2.0", memory: 4G}
 
+  # 时序图工具的判定器。和 audit-judge 是同一个形状、**各自独立的一份登录态**:
+  # 两个服务不能共用一个卷(同一个 kiro-cli 配置目录被两个容器同时写会互相踩)。
+  # 之所以不复用 audit-judge:它的 /v1/chat/completions 走 complete_json(),硬性要求回复是一个
+  # JSON 对象(extract_json + "必须以 { 开头"),喂它 PlantUML 请求会两次尝试全部白跑。
+  # 那个 JSON 强制是有意的(解析失败会让审计闸门读成"这一层没跑"),所以没有去改它。
+  sequence-diagram-judge:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/sequence-diagram-judge:${SEQUENCE_DIAGRAM_JUDGE_TAG}
+    networks: [inner]
+    env_file: [sequence-diagram.env]
+    volumes:
+      # kiro-cli 的登录状态。**不在任何备份里**,失效只能人工重新 kiro-cli login。
+      - seqdiag-kiro-home:/root/.kiro
+      - seqdiag-kiro-share:/root/.local/share/kiro-cli
+    deploy:
+      # 单副本且必须钉住某一台:登录态在那台机器的命名卷里,调度到别处就是一对空卷。
+      # **钉在新机器(manager),不用 *pin**。新服务没有历史数据,所以这是一次自由选择:
+      #   老机器 100.77.162.66 跑着生产容器、另外 4 个项目的容器,且没有磁盘清理机制
+      #     (2026-08-18 因磁盘满导致构建失败,手工清了 12.9GB,/etc/cron.daily 我们写不了)。
+      #   新机器 100.78.224.45 只有我们的东西。
+      # 代价说清楚:CI runner(581845, concurrent=3)也在新机器上,一个 JVM 密集的服务会和构建
+      # 抢 CPU。要换回老机器就把下面这两行替换成 `placement: *pin`,并把卷建到那台机器上。
+      replicas: 1
+      placement:
+        constraints: [node.hostname == node-100-78-224-45]
+      restart_policy: {condition: any}
+      update_config: {order: stop-first}
+      resources:
+        limits: {cpus: "2.0", memory: 4G}
+
 configs:
   # 键名固定;真实对象名由内容哈希决定(见下),避免"忘记改版本号"导致静默不生效
   edge_static:
@@ -266,6 +325,18 @@ volumes:
   judge-kiro-share:
     external: true
     name: ai-portal-audit-staging_judge-kiro-share
+  # 时序图判定器的登录态。新服务没有历史包袱,所以名字是干净的 —— 但同样必须 external 且写死:
+  # compose 默认按项目目录派生卷名,换目录就会挂到一对空卷上,表现是"未登录"。
+  # **这两个卷要先在跑判定器的那台机器上手工建出来** —— 卷是节点本地的,而这个服务钉在
+  # node-100-78-224-45(见上面的 placement)。external 卷不存在时 stack deploy 直接失败:
+  #   ssh node-100-78-224-45 'docker volume create seqdiag_judge-kiro-home
+  #                           docker volume create seqdiag_judge-kiro-share'
+  seqdiag-kiro-home:
+    external: true
+    name: seqdiag_judge-kiro-home
+  seqdiag-kiro-share:
+    external: true
+    name: seqdiag_judge-kiro-share
   db-data:
     external: true
     name: ai-portal-audit-staging_db-data

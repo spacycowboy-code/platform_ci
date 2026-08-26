@@ -22,6 +22,23 @@ http:
       priority: 50
       entryPoints: [web]
       service: grafana
+    # 时序图工具。自己的前缀,不能挂在 /api/ 下面 —— 那条已经是审计后端的。
+    # 前端的资源引用是相对的(style.css / app.js),API 调用也是相对的(api/generate),所以
+    # stripPrefix 之后前后端都对得上,服务本身不需要知道自己挂在哪个前缀下。
+    seqdiag:
+      rule: "PathPrefix(`/seqdiag/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [seqdiag-strip]
+      service: seqdiag
+    # 少一个尾斜杠时重定向。不做这件事的话 /seqdiag 匹配不上上面那条,会落到优先级 1 的 fe,
+    # 用户看到的是门户前端 —— 现象离原因很远。而且相对路径的 API 调用要靠尾斜杠才解析正确。
+    seqdiag-slash:
+      rule: "Path(`/seqdiag`)"
+      priority: 110
+      entryPoints: [web]
+      middlewares: [seqdiag-slash-redirect]
+      service: seqdiag
     fe:
       rule: "PathPrefix(`/`)"
       priority: 1
@@ -35,6 +52,17 @@ http:
     psi-add:
       addPrefix:
         prefix: "/api"
+    seqdiag-strip:
+      stripPrefix:
+        prefixes: ["/seqdiag"]
+    seqdiag-slash-redirect:
+      # 评审时确认一下 ${1} 有没有被 stack deploy 的变量替换吃掉:这个文件是以 docker config
+      # 下发的,compose 的变量替换只作用于 compose 文件本身、不作用于 configs 引用的文件内容,
+      # 所以预期是原样保留。真被吃掉的话改成 $1。
+      redirectRegex:
+        regex: "^(https?://[^/]+)/seqdiag$"
+        replacement: "${1}/seqdiag/"
+        permanent: true
 
   services:
     fe:
@@ -50,3 +78,6 @@ http:
     grafana:
       loadBalancer:
         servers: [{url: "http://100.77.162.66:9401"}]
+    seqdiag:
+      loadBalancer:
+        servers: [{url: "http://sequence-diagram:8000"}]
