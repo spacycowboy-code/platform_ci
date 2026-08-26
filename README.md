@@ -3,7 +3,24 @@
 服务仓维护者只需要这一份:怎么接进来、怎么发布回滚、出问题看哪。
 
 运维那一侧(改流水线本身、集群、备份恢复、grafana)见 [PLATFORM.md](PLATFORM.md);
+每个密钥配在哪、到期、失效了什么会坏见 [CREDENTIALS.md](CREDENTIALS.md);
 构建器为什么是现在这个见 [BUILDER.md](BUILDER.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
+
+## 现在构建和部署都是停着的
+
+`build` 会失败在 `docker_user 未设置`,`deploy` 会失败在 `docker login`。**这是有意的,不是故障。**
+
+镜像仓库原来用的是 `rvccie` —— RVC 项目的 CI 服务账号,不属于我们;镜像也一直推在他们的
+Artifactory 空间 `proj-rvc` 下面。2026-08-26 已把那几个组变量删掉。
+
+这件事影响**所有**引用本仓模板的服务(psi、eridoc-client、rtep-flow-manager、前端、审计那几个),
+不只是某一个仓。
+
+**已经在跑的服务不受影响**,两台机器上镜像都有本地副本,容器重启不需要拉取。
+但因为这个原因,**不要清理那两台机器上的镜像** —— 现在没法重新拉回来。
+
+要恢复,需要我们自己的 Artifactory 空间和服务账号。申请要点、恢复的三步、以及为什么
+"只给一个能推的空间"不够,都在 [CREDENTIALS.md](CREDENTIALS.md) 开头。
 
 ## 接一个新服务
 
@@ -36,7 +53,7 @@
 |---|---|---|
 | 1 | 你的服务仓,自动 | `lint` / `test` / `build`。**`build` 只验证能不能构建,不推镜像** |
 | 2 | 你的服务仓,你点按钮 | `deploy-prod`(仅 `main`)或 `deploy-test`(任意分支) |
-| 3 | **GitLab runner 的容器里** | 用 kaniko 构建镜像并推到 Artifactory:`armdocker.rnd.ericsson.se/proj-rvc/rp-ai/<服务>:<commit sha>` |
+| 3 | **GitLab runner 的容器里** | 用 kaniko 构建镜像并推到 Artifactory。路径原为 `armdocker.rnd.ericsson.se/proj-rvc/rp-ai/<服务>:<commit sha>`,`proj-rvc` 是别人的空间,换成我们自己的账号时这个前缀要一起改 |
 | 4 | platform-ci 的下游流水线(点按钮后自动出现) | ssh 到部署机:同步该环境的 compose 与配置、投放密钥、把这个服务的版本写进部署机的 `.env` |
 | 5 | 部署机 `100.77.162.66` | `docker compose pull` + `up -d`,**只重建这个服务的容器** |
 
@@ -96,6 +113,7 @@ include:
 
 | 现象 | 原因与处理 |
 |---|---|
+| `build` 报 `docker_user 未设置`,或 `deploy` 失败在 `docker login` | 镜像仓库凭据已删除,见本页开头。等我们自己的账号 |
 | `build` 报 `dial tcp: lookup docker` | 引入了需要 docker 守护进程的写法。runner 不允许特权容器,构建走 kaniko |
 | `build` 说"已存在,跳过构建" | 这个 commit 已有镜像。正常 |
 | `test` 报 `ModuleNotFoundError` | 测试以 `包.tests.模块` 引用自己;模板已设 `PYTHONPATH`,仍失败查本仓 pytest 配置 |
