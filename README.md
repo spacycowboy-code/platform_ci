@@ -113,7 +113,7 @@ include:
 
 | 现象 | 原因与处理 |
 |---|---|
-| `build` 报 `docker_user 未设置`,或 `deploy` 失败在 `docker login` | 镜像仓库凭据已删除,见本页开头。等我们自己的账号 |
+| `build` 报 `docker_user 未设置`,或 `deploy` 失败在 `docker login` | 组的 CI 变量里缺 `docker_user` / `docker_password` / `DOCKER_AUTH_CONFIG`。见 [CREDENTIALS.md](CREDENTIALS.md) |
 | `build` 报 `dial tcp: lookup docker` | 引入了需要 docker 守护进程的写法。runner 不允许特权容器,构建走 kaniko |
 | `build` 说"已存在,跳过构建" | 这个 commit 已有镜像。正常 |
 | `test` 报 `ModuleNotFoundError` | 测试以 `包.tests.模块` 引用自己;模板已设 `PYTHONPATH`,仍失败查本仓 pytest 配置 |

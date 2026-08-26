@@ -438,8 +438,10 @@ POST /projects/141595/access_tokens/<令牌 id>/rotate    {"expires_at": "<一�
 所有权转不走:`PUT owner_id` 返回 200 但会被默默忽略,`take_ownership` 是谁调用谁拿到。
 要换 owner 只能用目标身份的令牌重新创建计划。
 
-每周清缓存那条现在是**停用**状态:它清的是别人 Artifactory 空间里的缓存、用的是别人的服务账号,
-凭据删掉之后它也跑不了了。等我们自己的空间就绪后重新启用。
+每周清缓存那条现在是**停用**状态。当初停它的原因(清的是别人空间、用别人的账号)已经不成立 ——
+`tools/prune_build_cache.py` 已经指向 `proj-rp-ps-ai/build-cache`。重新启用之前还差一件:
+那个脚本里的 Artifactory 仓库键 `proj-rp-ps-ai-docker-global` 是按命名约定填的,要在 Artifactory
+界面上核对真实的 Repository Key。键名不对的话它会清不到东西,而且不会报错。
 
 ## 备份与恢复
 
