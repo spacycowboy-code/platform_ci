@@ -4,7 +4,7 @@
 ## 为什么需要这个
 
 服务模板的 kaniko 调用带 ``--cache=true --cache-repo``,每遇到一个没缓存过的层就往
-``proj-rvc/rp-ai/build-cache`` 推一份。kaniko 自己有 ``--cache-ttl``(默认 336h,即两周),
+``proj-rp-ps-ai/build-cache`` 推一份。kaniko 自己有 ``--cache-ttl``(默认 336h,即两周),
 过期的缓存它**不再采用**,但**不会去删** —— 所以这个仓只会长,不会缩。
 
 ## 按什么删
@@ -43,8 +43,10 @@ import urllib.request
 CACHE_TAG = re.compile(r"^[0-9a-f]{64}$")
 
 DEFAULT_BASE = "https://armdocker.rnd.ericsson.se/artifactory"
-DEFAULT_REPO_KEY = "proj-rvc-docker-global"
-DEFAULT_IMAGE_PATH = "proj-rvc/rp-ai/build-cache"
+# 仓库键要与镜像路径同一个空间。proj-rp-ps-ai 对应的键名待确认 ——
+# 在 Artifactory 界面上看这个 docker 仓库的 Repository Key,填在这里。
+DEFAULT_REPO_KEY = "proj-rp-ps-ai-docker-global"
+DEFAULT_IMAGE_PATH = "proj-rp-ps-ai/build-cache"
 
 
 class Artifactory:

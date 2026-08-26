@@ -42,11 +42,11 @@ spec:
 
 variables:
   REGISTRY: "armdocker.rnd.ericsson.se"
-  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:3.12-b3708562"
-  IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.service ]]"
-  EXTRA_IMAGE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/$[[ inputs.extra_service ]]"
+  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/python-base:3.12-b3708562"
+  IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/$[[ inputs.service ]]"
+  EXTRA_IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/$[[ inputs.extra_service ]]"
   # kaniko 的层缓存仓。与镜像同一路径前缀,所以推镜像的那套凭据就能写。
-  CACHE_REPO: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/build-cache"
+  CACHE_REPO: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/build-cache"
   KIND: "$[[ inputs.kind ]]"
   TAG: "$CI_COMMIT_SHORT_SHA"
   CTX: "$CI_PROJECT_DIR/$[[ inputs.context ]]"

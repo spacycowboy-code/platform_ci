@@ -6,22 +6,21 @@
 每个密钥配在哪、到期、失效了什么会坏见 [CREDENTIALS.md](CREDENTIALS.md);
 构建器为什么是现在这个见 [BUILDER.md](BUILDER.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
 
-## 现在构建和部署都是停着的
+## 镜像仓库换空间了(2026-08-26)
 
-`build` 会失败在 `docker_user 未设置`,`deploy` 会失败在 `docker login`。凭据是有意删除的,
-不用去查构建环境。
+镜像现在推到我们自己的空间:
 
-镜像仓库原来用的是 `rvccie` —— RVC 项目的 CI 服务账号,不属于我们;镜像也一直推在他们的
-Artifactory 空间 `proj-rvc` 下面。2026-08-26 已把那几个组变量删掉。
+```
+armdocker.rnd.ericsson.se/proj-rp-ps-ai/<服务>:<commit sha>
+```
 
-这件事影响**所有**引用本仓模板的服务(psi、eridoc-client、rtep-flow-manager、前端、审计那几个),
-不只是某一个仓。
+原来用的是 `proj-rvc` —— RVC 项目的 Artifactory 空间,账号也是他们的 CI 服务账号 `rvccie`,
+两者都不属于我们,已经停用。
 
-**已经在跑的服务不受影响**,两台机器上镜像都有本地副本,容器重启不需要拉取。
-但因为这个原因,**不要清理那两台机器上的镜像** —— 现在没法重新拉回来。
+**换空间之后每个服务的第一次部署必须重新构建**:旧镜像的 tag 只存在于 `proj-rvc` 里,新空间是空的。
+顺序是先在 platform-ci 上构建基础镜像 `python-base`(所有服务都 `FROM` 它),再逐个服务重建。
 
-要恢复,需要我们自己的 Artifactory 空间和服务账号。申请要点、恢复的三步、以及为什么
-"只给一个能推的空间"不够,都在 [CREDENTIALS.md](CREDENTIALS.md) 开头。
+当前凭据是**个人账号**,不是服务账号 —— 见 [CREDENTIALS.md](CREDENTIALS.md)。
 
 ## 接一个新服务
 

@@ -54,7 +54,7 @@ class FakeArtifactory:
 def item(tag, *, created_days, downloaded_days=None):
     entry = {
         "repo": "r",
-        "path": f"proj-rvc/rp-ai/build-cache/{tag}",
+        "path": f"proj-rp-ps-ai/build-cache/{tag}",
         "name": "manifest.json",
         "created": iso(created_days),
     }
@@ -65,7 +65,7 @@ def item(tag, *, created_days, downloaded_days=None):
 
 class TestSelection(unittest.TestCase):
     def rows(self, results):
-        return mod.collect(FakeArtifactory(results), "r", "proj-rvc/rp-ai/build-cache")
+        return mod.collect(FakeArtifactory(results), "r", "proj-rp-ps-ai/build-cache")
 
     def test_按最后命中而非创建时间(self):
         """创建时间很老但最近命中过的层应当保留。"""

@@ -1,5 +1,5 @@
 # 唯一的构建配方。本文件在 platform-ci 自己的流水线里构建成基础镜像
-#   armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base:<pyver>-<sha>
+#   armdocker.rnd.ericsson.se/proj-rp-ps-ai/python-base:<pyver>-<sha>
 # 服务流水线只在它之上加一层薄层(装本服务依赖 + 拷源码),那 4 行由
 # templates/python-service.yml 生成,不作为文件存在于任何服务仓。
 ARG PY_VERSION=3.12

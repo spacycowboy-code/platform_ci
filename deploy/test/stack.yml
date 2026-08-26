@@ -45,7 +45,7 @@ services:
 
   # ---------- 无状态,可跨节点 ----------
   frontend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG}
     networks: [inner]
     environment:
       # 集群内按服务名;host.docker.internal 只解析到副本所在那台机器,不能用
@@ -92,7 +92,7 @@ services:
   # 不挂日志目录:生产那份挂 /proj/rp_ait_prod/logs/…,而这个路径只在老机器上,挂了等于把副本
   # 钉死在一台机器。它同时写 stdout,用 docker service logs 看。
   product-structure-information:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG}
     networks: [inner]
     env_file: [product-structure-information.env]
     healthcheck:
@@ -127,7 +127,7 @@ services:
   # 无状态:不存任何东西,不挂卷,结果全在响应里返回,由门户的 gate 落库。所以可以两副本跨节点。
   # 不发布端口:同一 overlay 内按服务名访问,鉴权靠 ENGINE_TOKEN(它为空时服务拒绝启动)。
   skill-audit:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit:${SKILL_AUDIT_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/skill-audit:${SKILL_AUDIT_TAG}
     networks: [inner]
     env_file: [skill-audit.env]
     healthcheck:
@@ -159,7 +159,7 @@ services:
         reservations: {memory: 256M}
 
   audit-reconciler:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}
     networks: [inner]
     env_file: [audit-test.env]
     deploy:
@@ -192,7 +192,7 @@ services:
         limits: {memory: 1G}
 
   audit-backend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}
     networks: [inner]
     # audit-test.env 来自 File 变量 AUDIT_TEST_ENV。v1.5.0 起需要多一项
     # GITLAB_USER_AGENTS_TOKEN(理由见 deploy/test/compose.yml 里的说明);缺了只影响 Agent
@@ -228,7 +228,7 @@ services:
         limits: {cpus: "2.0", memory: 2G}
 
   audit-judge:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG}
     networks: [inner]
     env_file: [audit-test.env]
     volumes:

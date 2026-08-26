@@ -9,31 +9,39 @@
 
 ---
 
-## 现在最要紧的一件:镜像仓库没有凭据,构建和部署都停着
+## 镜像仓库:自己的空间,但用的是个人账号
 
-组变量里原来的 `docker_user` / `docker_password` / `DOCKER_AUTH_CONFIG` / `NPM_AUTH_B64`
-指向的是 `rvccie` —— RVC 项目的 CI 服务账号,不属于我们。镜像也一直推在
-`armdocker.rnd.ericsson.se/proj-rvc/rp-ai/` 下面,`proj-rvc` 是 RVC 在 Artifactory 的空间。
+镜像推到 `armdocker.rnd.ericsson.se/proj-rp-ps-ai/`,这个空间是我们自己的。
 
-**2026-08-26 已把这四个变量删除。** 后果:
+在这之前用的是 `proj-rvc`(RVC 项目的空间)加他们的 CI 服务账号 `rvccie`,两者都不属于我们。
+2026-08-26 停用,组变量重配到新空间。
 
-* 所有仓的 `build` 任务会停在 `docker_user 未设置`
-* `deploy` 的 `docker login` 会失败
-* 影响的不只是审计那几个服务 —— psi、eridoc-client、rtep-flow-manager、前端的流水线
-  都引用 platform-ci 的共享模板,一样构建不了
+**当前 `docker_user` 是 `ezhgmio`,一个个人账号,不是服务账号。** 这意味着:
 
-**正在跑的服务不受影响**:两台机器上镜像都有本地副本,容器重启不需要拉取。
-每天的备份也不受影响,它用的 `mysql:8.0` 在生产机器上有本地副本 —— 但这意味着
-**那台机器上的镜像不能清**,清掉就没法恢复了。
+* 每次推镜像都记在那个人名下
+* 那个人改口令或者离开,所有仓的构建与部署立刻断
+* 权限面比服务账号大:个人账号能碰的不止这一个空间
 
-恢复要三步:
+**要做的事:为 `proj-rp-ps-ai` 申请一个服务账号(functional ID),把这两个变量换掉。**
+在那之前,构建链依赖一个人的口令,这一点必须让接手的人知道。
 
-1. 申请我们自己的 Artifactory 空间 + 服务账号。**申请时必须同时要拉取 Docker Hub 的通道** ——
-   我们的 Dockerfile 是 `FROM python:3.11-slim`,栈里还直接用 `mysql:8.0`、`traefik`、
-   `grafana/grafana:11.1.0`。只给一个能推的空间,构建照样跑不起来。
-2. 在组 `rp-ai-miao` 的 CI 变量里配上新账号,变量名保持 `docker_user` / `docker_password`
-   (模板按这两个名字取),镜像路径改到新空间。
-3. 重建镜像并部署。所有镜像都能从对应提交重新构建,`proj-rvc` 里没有任何只存在于那里的东西。
+配在组 `rp-ai-miao` 的四个变量:
+
+| 变量 | 内容 | 谁要用 |
+|---|---|---|
+| `docker_user` | 账号名 | 构建推镜像、部署拉镜像 |
+| `docker_password` | 口令,掩码 | 同上 |
+| `DOCKER_AUTH_CONFIG` | `{"auths":{"armdocker.rnd.ericsson.se":{"auth":"<base64 账号:口令>"}}}` | **runner 拉作业自己的镜像**要用它,缺了作业根本起不来 |
+| `NPM_AUTH_B64` | `base64(账号:口令)` | 只有前端构建要。它指向的 npm 空间是 `proj-bce-npm`,那是别人的空间,这个账号未必有权限 |
+
+四个都**不能设成受保护变量**:`build` 在任意分支上跑,受保护变量只在保护分支可见,
+特性分支的构建会取不到。
+
+**换空间之后每个服务的第一次部署必须重新构建**:旧 tag 只存在于 `proj-rvc`,新空间是空的。
+先在 platform-ci 构建基础镜像 `python-base`(所有服务都 `FROM` 它),再逐个服务重建。
+
+拉基础镜像与第三方镜像走的是 armdocker 上的 Docker Hub 代理(`dockerhub-ericsson-remote`),
+和推送空间是两回事 —— 换账号时要确认新账号对那个代理也有读权限,否则 `FROM python:3.11-slim` 拉不下来。
 
 ---
 
