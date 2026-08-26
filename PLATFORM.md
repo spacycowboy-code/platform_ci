@@ -45,7 +45,9 @@
 两套环境目前都以 compose 跑在 `100.77.162.66` 上。集群(见下)已经建好但还没有服务搬上去。
 
 镜像标签写成 `${X_TAG:-上次已知}`:实际版本在部署机的 `.env` 里,由部署任务更新;git 里的默认值只是
-兜底,不代表线上。生产描述里 `agent-artifex` 带 `profiles: [stopped]`,部署不会启动它。
+兜底,不代表线上。`agent-artifex` 已从生产描述里删除(容器自 2026-08-05 起 Exited,服务本身只有
+`/`、`/health`、`/api/version`),要用的时候按「加一个服务」的流程加回来。注意 `deploy/prod/compose.yml`
+里还留着一段讲它 `profiles` 的注释,那段注释已经过期 —— 服务块不在了。
 
 ## 版本
 
@@ -95,9 +97,12 @@ routing mesh 的语义是:**只要有服务发布了端口,集群里每个节点
 谁挂在哪个对外前缀下、要不要改写前缀,只有把它们放在一起的这一层知道 —— 所以路由规则和端口一样,
 是环境的事实,写在环境描述里,不写在服务仓。
 
-现在这个仲裁者是前端镜像里的 nginx(`/api/product-structure/` → psi 的 `/api/`、
-`/api/eridoc/` → eridoc-client 的 `/api/`、`/api/` → 审计后端、`/grafana/` → grafana)。
-换成边缘代理后,这份映射搬到环境描述里,前端只负责静态文件。
+现在这个仲裁者是前端镜像里的 nginx(`/api/product-structure/` → psi 的 `/api/`、`/api/` → 审计后端、
+`/grafana/` → grafana)。换成边缘代理后,这份映射搬到环境描述里,前端只负责静态文件。
+
+`/api/eridoc/` **现在是显式 404**:EriDoc Access 已下线。写成 `return 404` 而不是删掉整段,是因为删掉
+之后请求会落到下面的 `/api/`,带着门户会话打到门户后端 —— 那是另一种行为。恢复是 revert 那一个提交。
+下面那段讲它为什么特殊,留作恢复时的依据。
 
 `/api/eridoc/` 这条比别的多一层:那个服务跑 `auth_mode=proxy`,身份来自
 `X-Forwarded-User`,而那个头是这层 nginx 用 `auth_request` 找 portal 后端校验 JWT 后注入的。
@@ -114,7 +119,7 @@ routing mesh 的语义是:**只要有服务发布了端口,集群里每个节点
 
 | 现在的写法 | `stack deploy` 的反应 | 换成 |
 |---|---|---|
-| `profiles: [stopped]`(`agent-artifex` 在用) | **整个部署失败**,不是忽略 | `replicas: 0` |
+| `profiles: [stopped]` | **整个部署失败**,`stack deploy` 不是忽略它 | `replicas: 0` |
 | `container_name` | 忽略,容器名变 `<栈>_<服务>.<序号>.<随机>` | 无。按容器名的运维命令要改 |
 | `restart: unless-stopped` | 忽略 | `deploy.restart_policy` |
 | `env_file` | **可用**,变量确实进容器 | 不变 |
@@ -150,7 +155,7 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 | 前端 | **2,一台一个** | 只有静态文件。同样用 `max_replicas_per_node: 1` + `stop-first`,理由见下面 psi 那一行 |
 | `product-structure-information` | **2,一台一个** | 产品结构缓存在**共享数据库表** `product_struct_cache`,不是容器本地磁盘,所以副本之间答案一致。曾经还有一层磁盘缓存,是死代码(无任何调用者;生产容器跑了数周该目录 0 个文件),已删除。集群里的声明**不挂任何卷**,所以两台都能跑;生产那份 compose 还挂着日志目录 `/proj/rp_ait_prod/logs/…`(单机上无妨),搬上集群时要一并去掉 —— 那个路径只在老机器上 |
 | `rtep-flow-manager` | **1**,且钉老机器 | 全部业务数据是一个本地 SQLite 文件(`/app/data/rtep_flow.db`)。两个进程写同一个 SQLite 会锁冲突甚至损坏 |
-| `audit-backend` | **1**,且钉老机器 | 代码不再依赖工作副本(门户仓 !54,内容改成按引用读写 GitLab),两个挂载也已于 2026-08-26 删除。现在它没有本地状态,可以多副本,只是生产还没搬到集群 |
+| `audit-backend` | 现在 **1**,但已经可以多副本 | 代码不再依赖工作副本(门户仓 !54,内容改成按引用读写 GitLab),两个挂载也已于 2026-08-26 删除,它没有本地状态了。测试环境的放置约束也已解除并验证过调度到另一台照常工作。副本数仍是 1,只是还没调 |
 | `audit-reconciler` | **1** | 周期性对账,多副本只是重复做同一件事,还会互相竞争同一批 MR 与数据行 |
 | `audit-judge` | **1**,且钉老机器 | kiro-cli 的登录状态在命名卷里 |
 | `skill-audit`(审计引擎) | **2,一台一个** | 无状态:不挂卷,结果全在响应里返回。用 `placement.max_replicas_per_node: 1` 而不是 `preferences: spread` —— 后者只是偏好,实测滚动更新后两个副本会挤在同一台,那台一挂两副本就是句空话。代价是更新要用 `stop-first`(两台各一个时 `start-first` 无处放新任务,更新会永远 Pending) |
