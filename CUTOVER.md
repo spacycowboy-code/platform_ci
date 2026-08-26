@@ -41,7 +41,7 @@
 
 ### 1. Traefik 进集群,路由先指向老机器上现有的服务
 
-`deploy/prod/stack.yml` 里 Traefik 暂时发布 **80**(临时的,只自己验证用,不告诉任何人),`edge-dynamic.yml` 的四个后端全部写老机器的 `主机:端口`。`services.txt` 里加一行 `traefik: swarm`,点它的部署按钮。
+`deploy/prod/stack.yml` 里 Traefik 暂时发布 **80**(临时的,只自己验证用,不告诉任何人),`edge-dynamic.yml` 里除 psi 之外的后端写老机器的 `主机:端口`(psi 已经在集群里,写的是服务名 `http://psi:8000`)。`services.txt` 里加一行 `traefik: swarm`,点它的部署按钮。
 
 * **验证**:逐条对照 `:80` 与 `:9001` 的响应码**和响应体**。测试环境那次比的是 `/`、`/api/...`、`/api/product-structure/vem/...`、`/grafana/`、`/api/version` 六条,全部一致才算过。
 * **回退**:`docker stack rm prod`。老机器一个容器都没动。

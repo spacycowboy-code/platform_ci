@@ -14,7 +14,7 @@
 镜像推到 `armdocker.rnd.ericsson.se/proj-rp-ps-ai/`。旧空间 `proj-rvc/rp-ai/` 属于 RVC 项目,
 连同他们的 CI 服务账号 `rvccie` 一起不再使用。
 
-`docker_user` 是 `ezhgmio`(组负责人本人的账号),口令按其要求不轮换。
+`docker_user` 是 `ezhgmio`,一个人的账号,不是服务账号。
 
 需要知道的一点:**这不是服务账号**,所以口令一变,所有仓的 `build` 与 `deploy` 会同时断,
 而现象是 `docker login` 失败,离原因不近。换成该空间的服务账号(functional ID)可以去掉这个耦合,

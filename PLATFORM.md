@@ -302,9 +302,9 @@ swarm 的 config 不可变,所以改配置要换名字。**不要用手工版本
 
 已经这样记着的一例:`GITLAB_USER_AGENTS_TOKEN`(rp-ai-portal-be v1.5.0 起,用户上传的 Agent 包要在
 `rp-ai/rp-ai-user-agents` 下建项目并推送)。它和同一份文件里的 `GITLAB_TOKEN` 是两个凭据,不能合并:
-后者是个人全域只读 token,只用来同步另外两个组;前者是那一个组的 group access token
-(Owner + `api`,`write_repository`),因为建项目和归档需要在该组有角色,而给"上传 Agent"配一个全域
-可写的凭据,比这个功能需要的大得多。
+后者是技能仓那一个项目的访问令牌(`api`,Developer),只能动技能仓;前者是 `rp-ai/rp-ai-user-agents`
+那一个组的组访问令牌,因为建项目需要在该组有角色。两者各自只覆盖自己那一个范围 —— 合成一个就得给
+一个同时能动技能仓和那个组的凭据,比任何一个功能需要的都大。
 
 ## 加一个服务
 
