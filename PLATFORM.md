@@ -6,8 +6,8 @@
 把生产切到集群的一次性步骤见 [CUTOVER.md](CUTOVER.md) —— **生产还没有搬**,测试环境已按那套顺序
 走过一遍(2026-08-14)。
 
-镜像空间 2026-08-26 从 `proj-rvc`(RVC 项目的空间)换成我们自己的 `proj-rp-ps-ai`,当前推镜像用的
-是个人账号而不是服务账号,细节见 [CREDENTIALS.md](CREDENTIALS.md)。
+镜像在我们自己的空间 `proj-rp-ps-ai`;推镜像用的账号不是服务账号,细节见
+[CREDENTIALS.md](CREDENTIALS.md)。
 
 要找具体的东西:
 
@@ -42,8 +42,8 @@
 | test | `deploy/test/` | `/proj/rp_ait_prod/services/test-env` | 任意分支 |
 | prod | `deploy/prod/` | `/proj/rp_ait_prod/services/prod-env` | 只有 `main` |
 
-生产以 compose 跑在 `100.77.162.66` 上。**测试环境已于 2026-08-14 全部搬到集群**(`deploy/test/services.txt`
-里每一行都是 `swarm`),生产还没搬。
+生产以 compose 跑在 `100.77.162.66` 上;**测试环境全部跑在集群上**(`deploy/test/services.txt`
+里每一行都是 `swarm`)。
 
 镜像标签写成 `${X_TAG:-上次已知}`:实际版本在部署机的 `.env` 里,由部署任务更新;git 里的默认值只是
 兜底,不代表线上。`agent-artifex` 已从生产描述里删除(容器自 2026-08-05 起 Exited,服务本身只有
@@ -157,9 +157,9 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 | 服务 | 副本数 | 依据 |
 |---|---|---|
 | 前端 | **2,一台一个** | 只有静态文件。同样用 `max_replicas_per_node: 1` + `stop-first`,理由见下面 psi 那一行 |
-| `product-structure-information` | **2,一台一个** | 产品结构缓存在**共享数据库表** `product_struct_cache`,不是容器本地磁盘,所以副本之间答案一致。曾经还有一层磁盘缓存,是死代码(无任何调用者;生产容器跑了数周该目录 0 个文件),已删除。集群里的声明**不挂任何卷**,所以两台都能跑;生产那份 compose 还挂着日志目录 `/proj/rp_ait_prod/logs/…`(单机上无妨),搬上集群时要一并去掉 —— 那个路径只在老机器上 |
+| `product-structure-information` | **2,一台一个** | 产品结构缓存在**共享数据库表** `product_struct_cache`,不在容器本地磁盘,所以副本之间答案一致(服务里没有磁盘缓存那一层)。集群里的声明**不挂任何卷**,所以两台都能跑;生产那份 compose 还挂着日志目录 `/proj/rp_ait_prod/logs/…`(单机上无妨),搬上集群时要一并去掉 —— 那个路径只在老机器上 |
 | `rtep-flow-manager` | **1**,且钉老机器 | 全部业务数据是一个本地 SQLite 文件(`/app/data/rtep_flow.db`)。两个进程写同一个 SQLite 会锁冲突甚至损坏 |
-| `audit-backend` | 现在 **1**,但已经可以多副本 | 代码不再依赖工作副本(门户仓 !54,内容改成按引用读写 GitLab),两个挂载也已于 2026-08-26 删除,它没有本地状态了。测试环境的放置约束也已解除并验证过调度到另一台照常工作。副本数仍是 1,只是还没调 |
+| `audit-backend` | **1**,但不受限制 | 内容按不可变引用读写 GitLab,环境描述里不挂技能仓工作副本也不挂 ssh 私钥,所以它没有本地状态。测试环境里它没有放置约束(实测调度到另一台照常工作)。副本数是 1 只是还没调 |
 | `audit-reconciler` | **1** | 周期性对账,多副本只是重复做同一件事,还会互相竞争同一批 MR 与数据行 |
 | `audit-judge` | **1**,且钉老机器 | kiro-cli 的登录状态在命名卷里 |
 | `skill-audit`(审计引擎) | **2,一台一个** | 无状态:不挂卷,结果全在响应里返回。用 `placement.max_replicas_per_node: 1` 而不是 `preferences: spread` —— 后者只是偏好,实测滚动更新后两个副本会挤在同一台,那台一挂两副本就是句空话。代价是更新要用 `stop-first`(两台各一个时 `start-first` 无处放新任务,更新会永远 Pending) |
@@ -438,10 +438,9 @@ POST /projects/141595/access_tokens/<令牌 id>/rotate    {"expires_at": "<一�
 所有权转不走:`PUT owner_id` 返回 200 但会被默默忽略,`take_ownership` 是谁调用谁拿到。
 要换 owner 只能用目标身份的令牌重新创建计划。
 
-每周清缓存那条现在是**停用**状态。当初停它的原因(清的是别人空间、用别人的账号)已经不成立 ——
-`tools/prune_build_cache.py` 已经指向 `proj-rp-ps-ai/build-cache`。重新启用之前还差一件:
-那个脚本里的 Artifactory 仓库键 `proj-rp-ps-ai-docker-global` 是按命名约定填的,要在 Artifactory
-界面上核对真实的 Repository Key。键名不对的话它会清不到东西,而且不会报错。
+每周清缓存那条是**停用**状态。`tools/prune_build_cache.py` 指向 `proj-rp-ps-ai/build-cache`,
+但里面的 Artifactory 仓库键 `proj-rp-ps-ai-docker-global` 是按命名约定填的 —— 键名不对时它清不到
+东西且不报错。启用之前先在 Artifactory 界面上核对真实的 Repository Key。
 
 ## 备份与恢复
 
@@ -521,6 +520,4 @@ table 并重排布局,已导出到 `dashboards/skill-metrics.json`,现在两边�
 | 仓库里删不掉的一次性标签 | 推送账号无删除权限 |
 | `services/test-env` 空目录 | 由部署任务以 `ezhgmio` 身份创建 |
 
-生产审计后端原来从旧部署目录挂载推送密钥(私钥 `600 ezhgmio`),**2026-08-26 已经去掉** ——
-门户改成按不可变引用读写技能仓,不再需要工作副本和 ssh 密钥。去挂载之后在生产上验过:
-工作副本路径与 `/root/.ssh` 都不存在,技能的读写照常。
+

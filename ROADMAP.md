@@ -119,8 +119,8 @@ JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users`
 
 **负载均衡现在对前端、psi、审计引擎成立**(各 2 副本、一台一个),剩下的还不行,这一条要跟需求方对齐
 预期。每个服务能不能多副本、依据是什么,逐个查过,表在 [PLATFORM.md](PLATFORM.md)。卡住的原因分两类:
-本地状态要服务侧改(rtep 的 SQLite、判定器的登录卷、grafana 的库),或者环境描述里的挂载要删。审计后端这一条已经
-解决:代码不依赖工作副本,两个挂载也已于 2026-08-26 删除。
+本地状态要服务侧改(rtep 的 SQLite、判定器的登录卷、grafana 的库),或者环境描述里的挂载要删。审计后端不在这两类里:
+它不依赖工作副本,环境描述里也没有那两个挂载。
 
 ### ✅ 端口动态分配
 
@@ -215,18 +215,110 @@ backlog,0 处 opentelemetry / jaeger / zipkin。
 
 ## 挂着没做的事
 
-| 事 | 卡在谁 |
-|---|---|
-| 镜像仓库用的是**个人账号**(`ezhgmio`)而不是服务账号。那个人改口令或离开,所有仓的构建与部署立刻断。空间 `proj-rp-ps-ai` 本身是我们自己的 | 要对外申请该空间的服务账号(functional ID)。另外 `NPM_AUTH_B64` 未配,前端下次构建前要确认该账号对 `proj-bce-npm` 有权限 |
-| 令牌到期没有任何提醒机制。现有令牌 2027-07 到 2027-08 陆续到期,只有日期,没有人会被通知。GitLab 有轮换接口,注意不传 `expires_at` 只给一周 | 我们自己,一个定时检查 |
-| `deploy/prod/env-files.txt` 里 psi 那行标成 `=swarm`,而 `services.txt` 里 psi 是 `compose`。投放逻辑只投属于本次形态的密钥,所以**改 `PSI_PROD_ENV` 对生产 psi 不生效** —— 机器上那份 `product-structure-information.env` 永远是旧的。`rsync` 排除了 `*.env`,所以现有文件不会被删,psi 现在跑得好;但换机器或新建环境时它会缺这个文件起不来。修法是去掉那行末尾的 `=swarm` | 我们自己,一处改动 |
-| 生产 `*.env` 是 `-rw-rw-r--`(任何登机用户可读数据库/JWT/LDAP 口令);部署目录含 `prod-env` 是 `777`,可写 | 属主 `ezhgmio`。`chmod 640 *.env` + `chmod 750` |
-| psi 仓 git 历史里两个密钥要轮换:`nacos_ml_vem.yml`(ml-vem 生产库口令)、`secrets.yml`(Azure client_secret)。这两个不是我们签发的,随 psi 一起继承来的 | 密钥的归属方。清历史无用,凭据已泄露 |
-| 上传报告不发 `clear`,上传者分不清"查过是干净的"和"根本没查";前端三处分支等着 | 产品定显示哪几项检查(共 25 项)。同时挡着重复性那一行的呈现 |
-| 构建器 kaniko 上游已归档,替代方案 BuildKit rootless 起不来(宿主机关了非特权用户命名空间,是组织加固基线)。三个选项与实测证据见 [BUILDER.md](BUILDER.md) | 要 runner 宿主机维护者放开 `kernel.unprivileged_userns_clone`,或走安全例外 |
-| grafana 看板的真相源没定:`allowUiUpdates: true`,界面上的改动不回写仓库,卷重建就丢(已分叉过一次)。收紧的前提是先有同步任务 —— `grafana` 现在不在 `services.txt` 里,没有流水线管它 | 我们自己,一个手动同步任务 |
-| 生产还是单机(集群里 `prod_` 服务数 0)。原来卡在两个挂载和个人令牌,2026-08-26 都已解决 | 现在没有硬阻塞,按 [CUTOVER.md](CUTOVER.md) 执行即可。注意那份手册里 psi 的副本数与过期注释两条提醒 |
+每条写三件:现在是什么样、做完了怎么验、卡在哪。
 
-已完成,勿重复提:`frontend`、`product-structure-information`、`skill-audit` 均已加
-`max_replicas_per_node: 1`,两副本实测分处两台。`preferences: spread` 只是偏好,单靠它滚动更新后会挤在
-一台,界面仍显示 2/2。
+### 镜像仓库账号不是服务账号
+
+`docker_user` 是组负责人本人的账号。口令一变,所有仓的 `build` 与 `deploy` 同时断,现象是
+`docker login` 失败。
+
+* **判据**:`docker_user` 换成 `proj-rp-ps-ai` 的服务账号(functional ID),任一服务仓的
+  `build` 与 `deploy-test` 各跑通一次。
+* **卡在**:要申请那个服务账号。属于可选项,不做也能运行。
+
+### 前端构建缺 `NPM_AUTH_B64`
+
+组变量里没有它。只有 `kind: web` 的构建要它,而它指向的 npm 空间是 `proj-bce-npm`,当前账号是否有
+权限未验证。前端在新镜像空间里的那份是搬过去的旧构建,没有在这里真构建过。
+
+* **判据**:配上变量后,前端仓 `build` 跑通(它会写 `.npmrc` 并从那个 npm 空间装依赖)。
+* **卡在**:确认账号对 `proj-bce-npm` 的读权限。
+
+### 令牌到期没有提醒
+
+现有令牌 2027-07 到 2027-08 陆续到期,只有日期,没有任何通知机制。
+
+* **判据**:有一条定时流水线在到期前若干天让流水线红,并且它自己被验证过一次(把某个测试令牌的
+  到期日临时改近,看它是否报警)。
+* **卡在**:我们自己,一个定时检查。注意 GitLab 的轮换接口不传 `expires_at` 只给一周。
+
+### psi 的生产密钥投放不生效
+
+`deploy/prod/env-files.txt` 里 psi 那行标成 `=swarm`,而 `services.txt` 里 psi 是 `compose`。
+投放逻辑只投属于本次形态的密钥,所以改 `PSI_PROD_ENV` 不会到达生产机器,那份
+`product-structure-information.env` 一直是旧的。`rsync` 排除 `*.env`,所以现有文件不会被删,
+psi 现在跑得好;换机器或新建环境时会缺这个文件起不来。
+
+* **判据**:去掉那行末尾的 `=swarm`;改一次 `PSI_PROD_ENV` 里的某个无害变量并部署 psi,
+  在机器上看到那份 `.env` 变了。
+* **卡在**:一处改动,没有外部依赖。
+
+### 生产环境文件权限过宽
+
+生产 `*.env` 是 `-rw-rw-r--`(任何登机用户可读数据库/JWT/LDAP 口令),部署目录里 `prod-env` 是 `777`。
+
+* **判据**:`*.env` 为 `640`、目录为 `750`,并且之后跑一次部署仍然成功(部署任务要能写)。
+* **卡在**:文件属主是 `ezhgmio`。
+
+### psi 仓 git 历史里的两个密钥
+
+`nacos_ml_vem.yml`(ml-vem 生产库口令)与 `secrets.yml`(Azure client_secret)在 git 历史里。
+这两个不是我们签发的,随 psi 一起继承。
+
+* **判据**:归属方确认已轮换。清历史没有意义 —— 凭据已经暴露过。
+* **卡在**:密钥的归属方。
+
+### 上传报告不发 `clear`
+
+上传者分不清"查过是干净的"和"根本没查",前端有三处分支等着这个信号。
+
+* **判据**:产品定下要显示哪几项检查(共 25 项),报告里出现 `clear`,前端三处分支接上。
+* **卡在**:产品决定。同时挡着重复性那一行的呈现。
+
+### 构建器
+
+kaniko 上游已归档。替代方案 BuildKit rootless 在这台 runner 宿主机上起不来 ——
+非特权用户命名空间是关的,那是组织加固基线。三个选项与实测证据见 [BUILDER.md](BUILDER.md)。
+
+* **判据**:选定一个方案并让所有服务仓的 `build` 在它上面跑通。
+* **卡在**:要 runner 宿主机维护者放开 `kernel.unprivileged_userns_clone`,或者走安全例外。
+
+### grafana 看板的真相源没定
+
+`allowUiUpdates: true`,界面上的改动只在 grafana 的数据卷里,不回写仓库,卷一重建就变回文件里的样子。
+收紧的前提是先有同步任务:`grafana` 不在 `services.txt` 里,没有流水线管它的配置。
+
+* **判据**:有一个任务能把 `deploy/<环境>/grafana/` 下发到机器上;`allowUiUpdates` 改成 `false`
+  之后,改文件 → 提交 → 跑一次任务,界面上能看到新看板。
+* **卡在**:我们自己,一个手动同步任务。
+
+### 清缓存任务停用中,仓库键待核对
+
+`tools/prune_build_cache.py` 指向 `proj-rp-ps-ai/build-cache`,但里面的 Artifactory 仓库键
+`proj-rp-ps-ai-docker-global` 是按命名约定填的。键名不对时它清不到东西,而且不报错。
+
+* **判据**:在 Artifactory 界面上核对该 docker 仓库的 Repository Key,填对之后手动跑一次,
+  日志里能看到被删的层数。
+* **卡在**:核对键名。
+
+### 生产还是单机
+
+集群里 `prod_` 前缀的服务数是 0。测试环境已全部在集群上。
+
+* **判据**:按 [CUTOVER.md](CUTOVER.md) 执行完,生产的对外行为逐条比对一致。
+* **卡在**:没有硬阻塞。注意那份手册里关于 psi 副本数与一段过期注释的两条提醒。
+
+### API 级别的授权还剩一处
+
+`GET /api/skills` 用客户端请求头判可见性,填成 `ADMINMM` 就能列出待复核与被拒的技能。
+详情见上面「API 级别权限控制」那节。
+
+* **判据**:改成 `acting_eid(request, x_user_eid)`;带伪造头请求,列表里不出现非
+  `approved` 且不属于该 EID 的技能。
+* **卡在**:一行改动,在服务仓里。
+
+服务级别的待办(收敛器补 manifest 扫描、`instructions` 列的删除、三个查重 MR 的评审)在
+门户后端仓的 README 里。
+
+`frontend`、`product-structure-information`、`skill-audit` 都带 `max_replicas_per_node: 1`,
+两副本分处两台机器。`preferences: spread` 只是偏好,单靠它滚动更新后会挤在一台,而界面仍显示 2/2。
