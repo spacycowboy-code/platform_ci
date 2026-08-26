@@ -109,12 +109,12 @@ services:
       - "9000:8000"
     volumes:
       # 技能仓的工作副本。容器内路径与代码里的默认值一致,改一处要同时改另一处。
-      - /proj/rp_ait_prod/data/ai-portal-be/rp-ai-skill:/proj/radio_ivc_rvc_workspace/ezhgmio/rp-ai-skill
+      # 只剩日志。技能仓的工作副本和推送私钥已经去掉:内容按引用走 GitLab 接口读写,鉴权是
+      # portal-skill-repo-prod 这个项目访问令牌(api + Developer + main 推送白名单)。
       - /proj/rp_ait_prod/logs/ai-portal-be:/app/logs
       # 推技能仓用的部署密钥,只读。
       # 推技能仓用的部署密钥,只读。路径仍在旧部署目录下,因此该目录不能退役;
       # 终态是像其它环境密钥一样由部署任务投放(见 DESIGN.md 待别人处理)。
-      - /proj/rp_ait_prod/services/ai-portal-be/ssh:/root/.ssh:ro
     depends_on:
       - audit-judge
     healthcheck:
