@@ -50,9 +50,11 @@
 * **验证**:逐条对照 `:80` 与 `:9001` 的响应码**和响应体**。测试环境那次比的是 `/`、`/api/...`、`/api/product-structure/vem/...`、`/grafana/`、`/api/version` 六条,全部一致才算过。
 * **回退**:`docker stack rm prod`。老机器一个容器都没动。
 
-### 2. 搬能并行的:psi、agent-artifex
+### 2. 搬能并行的:psi
 
-一个一个来。把服务加进 `stack.yml`(不发布端口)、`services.txt` 那一行的模式改成 `swarm`、点部署按钮;确认集群副本健康后,把 `edge-dynamic.yml` 里对应的后端从 `主机:端口` 改成服务名,再部署一次。
+把服务加进 `stack.yml`(不发布端口)、`services.txt` 那一行的模式改成 `swarm`、点部署按钮;确认集群副本健康后,把 `edge-dynamic.yml` 里对应的后端从 `主机:端口` 改成服务名,再部署一次。
+
+**`deploy/prod/stack.yml` 里 psi 现在声明的是 `replicas: 1`**,而测试环境是 `replicas: 2` + `max_replicas_per_node: 1`。psi 的缓存在共享数据库表里,两副本答案一致,所以搬的时候要顺手把生产这份改成 2 —— 否则搬完仍然是单副本,而文档里那张表写的是 2。
 
 * **验证**:六条路径仍然一致;老机器上的 compose 容器还在跑(留作回退)。
 * **回退**:把 `edge-dynamic.yml` 那一行改回 `主机:端口`、`services.txt` 改回 `compose`,部署。集群副本留着不碍事。

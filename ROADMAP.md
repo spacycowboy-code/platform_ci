@@ -10,9 +10,11 @@
 
 ### ✅ 前端一个仓库,后端多个仓库
 
-7 个服务仓:`rp-ai-portal-fe`(前端)、`rp-ai-portal-be`(门户/技能审计后端)、
-`skill-audit-judge`、`product-structure-information`、`rtep-flow-manager`、`eridoc-client`,
-外加平台仓 `platform-ci`。
+6 个服务仓:`rp-ai-portal-fe`(前端)、`rp-ai-portal-be`(门户/技能审计后端)、
+`skill-audit`(审计引擎与判定器,一个仓产出两个镜像)、`product-structure-information`、
+`rtep-flow-manager`、`eridoc-client`,外加平台仓 `platform-ci`。
+
+`skill-audit-judge` 是镜像名,不是仓名 —— 它由 `skill-audit` 仓的 `Dockerfile.judge` 构建。
 
 ### ✅ 一个 Dockerfile、一个 compose、公共 CI 参数抽到一个文件
 
@@ -153,15 +155,11 @@ Docker 29 不兼容(报 `client version 1.24 is too old`,`DOCKER_API_VERSION` �
 (生产 9001、测试 9101)、自己的环境变量(GitLab File 变量分别投放)。测试环境的审计后端连的是
 测试环境自己的 MySQL 容器(库 `ai_portal`),与生产库无关。
 
-**还没分开的**:测试环境有两条路由实际指向生产实例 ——
+**psi 已经分开了**:测试环境有自己的 psi(`test/stack.yml` 里 `replicas: 2`),
+`test/edge-dynamic.yml` 指向服务名而不是生产的 `100.77.162.66:9010`,而且有独立的 `PSI_TEST_ENV`。
 
-| 测试环境的路径 | 实际打到 |
-|---|---|
-| `/api/product-structure/` | 生产 psi(`100.77.162.66:9010`) |
-| `/grafana/` | 生产 grafana(`:9401`) |
-
-后果是在测试环境查一次产品结构,写的是生产库里的缓存表。**要闭环,测试环境得有自己的 psi 和
-自己的 grafana。**
+**grafana 还没分**:测试环境的 `/grafana/` 仍指向生产 grafana(`:9401`)。要闭环,测试环境得有
+自己的 grafana。
 
 ### ✅ 服务版本管理(版本集合)
 
@@ -221,6 +219,7 @@ backlog,0 处 opentelemetry / jaeger / zipkin。
 |---|---|
 | **镜像仓库没有凭据** —— 原来用的是 RVC 项目的服务账号 `rvccie`、推在他们的空间 `proj-rvc` 下,2026-08-26 已把组变量删除。构建与部署全部停止,影响所有引用本仓模板的服务。申请要点见 [CREDENTIALS.md](CREDENTIALS.md) 开头 | 要对外申请我们自己的 Artifactory 空间 + 服务账号 + **拉 Docker Hub 的通道**(缺后者照样构建不了) |
 | 令牌到期没有任何提醒机制。现有令牌 2027-07 到 2027-08 陆续到期,只有日期,没有人会被通知。GitLab 有轮换接口,注意不传 `expires_at` 只给一周 | 我们自己,一个定时检查 |
+| `deploy/prod/env-files.txt` 里 psi 那行标成 `=swarm`,而 `services.txt` 里 psi 是 `compose`。投放逻辑只投属于本次形态的密钥,所以**改 `PSI_PROD_ENV` 对生产 psi 不生效** —— 机器上那份 `product-structure-information.env` 永远是旧的。`rsync` 排除了 `*.env`,所以现有文件不会被删,psi 现在跑得好;但换机器或新建环境时它会缺这个文件起不来。修法是去掉那行末尾的 `=swarm` | 我们自己,一处改动 |
 | 生产 `*.env` 是 `-rw-rw-r--`(任何登机用户可读数据库/JWT/LDAP 口令);部署目录含 `prod-env` 是 `777`,可写 | 属主 `ezhgmio`。`chmod 640 *.env` + `chmod 750` |
 | psi 仓 git 历史里两个密钥要轮换:`nacos_ml_vem.yml`(ml-vem 生产库口令)、`secrets.yml`(Azure client_secret)。这两个不是我们签发的,随 psi 一起继承来的 | 密钥的归属方。清历史无用,凭据已泄露 |
 | 上传报告不发 `clear`,上传者分不清"查过是干净的"和"根本没查";前端三处分支等着 | 产品定显示哪几项检查(共 25 项)。同时挡着重复性那一行的呈现 |
