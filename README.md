@@ -8,7 +8,8 @@
 
 ## 现在构建和部署都是停着的
 
-`build` 会失败在 `docker_user 未设置`,`deploy` 会失败在 `docker login`。**这是有意的,不是故障。**
+`build` 会失败在 `docker_user 未设置`,`deploy` 会失败在 `docker login`。凭据是有意删除的,
+不用去查构建环境。
 
 镜像仓库原来用的是 `rvccie` —— RVC 项目的 CI 服务账号,不属于我们;镜像也一直推在他们的
 Artifactory 空间 `proj-rvc` 下面。2026-08-26 已把那几个组变量删掉。
