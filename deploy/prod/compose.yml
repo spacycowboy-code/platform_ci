@@ -195,7 +195,10 @@ services:
     env_file:
       - grafana.env
     environment:
-      GF_SERVER_ROOT_URL: "http://100.77.162.66:9001/grafana/"
+      # 必须与对外入口一致:Grafana 的自生成链接和 Live 的 websocket 地址都由它决定。
+      # 写成 http 的话 https 页面里会嵌 http 绝对地址,被浏览器按混合内容拦掉,实时面板断线。
+      # 入口变更时这一行要同步改。
+      GF_SERVER_ROOT_URL: "https://rpai.ews.gic.ericsson.se/grafana/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_SECURITY_ALLOW_EMBEDDING: "true"
       GF_SECURITY_COOKIE_SAMESITE: "lax"
@@ -216,7 +219,11 @@ services:
     container_name: rp-ai-portal-fe
     restart: unless-stopped
     ports:
-      - "9001:80"
+      # 只绑回环,不对网络开放。唯一对外入口是 edge(443),它在同一个 compose 网络里
+      # 按服务名访问本服务。留这个口子有两个用途:在两层结构里隔离故障(是 edge 坏了
+      # 还是应用坏了),以及 edge 出问题时的降级入口。
+      # 对外的 9001 现在由 edge 持有并只回 302 到域名。
+      - "127.0.0.1:8901:80"
     environment:
       AUDIT_UPSTREAM: "http://host.docker.internal:9000"
       PSI_UPSTREAM: "http://host.docker.internal:9010"
@@ -231,6 +238,51 @@ services:
       # busybox wget 优先走 IPv6,而 nginx 只监听 0.0.0.0——旧的探测因此一直被拒,
       # 容器长期显示 unhealthy 而站点其实是好的。
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ---- 对外入口 ----
+  # 唯一对外入口。只做两件事:终止 TLS、把老入口 9001 跳到新域名。路由一概不管 ——
+  # /api/、/api/product-structure/、/grafana/ 全由前端容器内那层 nginx 决定,那是应用的
+  # 一部分(随前端版本变);这一层持有主机名、证书、TLS 参数(随环境变)。所以 edge/nginx.conf
+  # 刻意写得处处比前端容器内更宽松,前端调自己的超时和上传上限时这里不用跟着改。
+  #
+  # 为什么不把 TLS 塞进前端镜像:证书由 CLM 手工签发、没有 ACME,续期与前端发版是两条独立的
+  # 时间线,焊进镜像等于把换证书变成一次应用发版;而且前端镜像与 staging 共用同一 digest,
+  # 加 TLS 会让两个环境分叉。
+  #
+  # 证书不进 git,也不能放在本目录 —— 部署是 rsync --delete,放这里会被下次部署清掉。
+  # 手工投放到 /proj/rp_ait_prod/certs/rpai/,与 ai-portal-be 的部署密钥同一模式
+  # (终态应由部署任务从 CI File 变量投放)。挂的是**目录**而不是两个文件:续期换 inode,
+  # 挂文件的话容器内永远看不到新证书,reload 后仍是旧证书且不报错。
+  # 续期步骤见 /proj/rp_ait_prod/certs/rpai/RENEWAL.md
+  #
+  # 不挂 /var/log/nginx:本镜像把 access.log/error.log 做成了指向 /dev/stdout、/dev/stderr
+  # 的符号链接,盖上宿主机目录会把它们埋掉(docker logs 就空了),还会在没有轮转的情况下
+  # 往磁盘堆文件。日志走容器标准输出。
+  #
+  # 本服务不在 services.txt 里:用的是第三方镜像,没有对应构建流水线,部署任务不会重建它
+  # —— 与 grafana 一样,改了配置要手动 docker compose up -d edge。
+  edge:
+    image: nginx:1.27-alpine
+    container_name: rp-ai-edge
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # 老入口。前端已不再对外发布 9001,这个端口现在由本服务持有,只回 302。
+      - "9001:9001"
+    volumes:
+      - ./edge/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - /proj/rp_ait_prod/certs/rpai:/etc/nginx/certs:ro
+    depends_on:
+      - frontend
+    healthcheck:
+      # 打专用的 8081/healthz,不打 80 或 9001:那两个都返回 302,busybox wget 会跟着跳到
+      # 外网域名上,健康检查就变成了在测 DNS 和证书。
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3
