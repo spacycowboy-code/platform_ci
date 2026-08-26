@@ -8,7 +8,7 @@
 
 ## 镜像仓库换空间了(2026-08-26)
 
-镜像现在推到我们自己的空间:
+镜像推到我们自己的空间:
 
 ```
 armdocker.rnd.ericsson.se/proj-rp-ps-ai/<服务>:<commit sha>
@@ -17,10 +17,10 @@ armdocker.rnd.ericsson.se/proj-rp-ps-ai/<服务>:<commit sha>
 原来用的是 `proj-rvc` —— RVC 项目的 Artifactory 空间,账号也是他们的 CI 服务账号 `rvccie`,
 两者都不属于我们,已经停用。
 
-**换空间之后每个服务的第一次部署必须重新构建**:旧镜像的 tag 只存在于 `proj-rvc` 里,新空间是空的。
-顺序是先在 platform-ci 上构建基础镜像 `python-base`(所有服务都 `FROM` 它),再逐个服务重建。
+换的时候没有重建任何服务:生产与测试在跑的镜像都从旧空间**按相同 digest 原样推到新空间**,
+再重放一次版本集合。线上的二进制和换之前完全一样,只是镜像引用的路径变了。
 
-当前凭据是**个人账号**,不是服务账号 —— 见 [CREDENTIALS.md](CREDENTIALS.md)。
+当前推镜像用的是**个人账号**而不是服务账号,见 [CREDENTIALS.md](CREDENTIALS.md)。
 
 ## 接一个新服务
 

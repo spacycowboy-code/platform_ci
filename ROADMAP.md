@@ -217,7 +217,7 @@ backlog,0 处 opentelemetry / jaeger / zipkin。
 
 | 事 | 卡在谁 |
 |---|---|
-| **镜像仓库没有凭据** —— 原来用的是 RVC 项目的服务账号 `rvccie`、推在他们的空间 `proj-rvc` 下,2026-08-26 已把组变量删除。构建与部署全部停止,影响所有引用本仓模板的服务。申请要点见 [CREDENTIALS.md](CREDENTIALS.md) 开头 | 要对外申请我们自己的 Artifactory 空间 + 服务账号 + **拉 Docker Hub 的通道**(缺后者照样构建不了) |
+| 镜像仓库用的是**个人账号**(`ezhgmio`)而不是服务账号。那个人改口令或离开,所有仓的构建与部署立刻断。空间 `proj-rp-ps-ai` 本身是我们自己的 | 要对外申请该空间的服务账号(functional ID)。另外 `NPM_AUTH_B64` 未配,前端下次构建前要确认该账号对 `proj-bce-npm` 有权限 |
 | 令牌到期没有任何提醒机制。现有令牌 2027-07 到 2027-08 陆续到期,只有日期,没有人会被通知。GitLab 有轮换接口,注意不传 `expires_at` 只给一周 | 我们自己,一个定时检查 |
 | `deploy/prod/env-files.txt` 里 psi 那行标成 `=swarm`,而 `services.txt` 里 psi 是 `compose`。投放逻辑只投属于本次形态的密钥,所以**改 `PSI_PROD_ENV` 对生产 psi 不生效** —— 机器上那份 `product-structure-information.env` 永远是旧的。`rsync` 排除了 `*.env`,所以现有文件不会被删,psi 现在跑得好;但换机器或新建环境时它会缺这个文件起不来。修法是去掉那行末尾的 `=swarm` | 我们自己,一处改动 |
 | 生产 `*.env` 是 `-rw-rw-r--`(任何登机用户可读数据库/JWT/LDAP 口令);部署目录含 `prod-env` 是 `777`,可写 | 属主 `ezhgmio`。`chmod 640 *.env` + `chmod 750` |
@@ -225,7 +225,7 @@ backlog,0 处 opentelemetry / jaeger / zipkin。
 | 上传报告不发 `clear`,上传者分不清"查过是干净的"和"根本没查";前端三处分支等着 | 产品定显示哪几项检查(共 25 项)。同时挡着重复性那一行的呈现 |
 | 构建器 kaniko 上游已归档,替代方案 BuildKit rootless 起不来(宿主机关了非特权用户命名空间,是组织加固基线)。三个选项与实测证据见 [BUILDER.md](BUILDER.md) | 要 runner 宿主机维护者放开 `kernel.unprivileged_userns_clone`,或走安全例外 |
 | grafana 看板的真相源没定:`allowUiUpdates: true`,界面上的改动不回写仓库,卷重建就丢(已分叉过一次)。收紧的前提是先有同步任务 —— `grafana` 现在不在 `services.txt` 里,没有流水线管它 | 我们自己,一个手动同步任务 |
-| 生产还是单机(集群里 `prod_` 服务数 0)。原来卡在两个挂载和个人令牌,**这两条 2026-08-26 都已解决**:门户改成按不可变引用读写技能仓,工作副本与 ssh 私钥挂载都已从环境描述里删掉并在生产验证;令牌换成项目访问令牌 `portal-skill-repo-prod` | 现在卡在上面那条镜像仓库凭据 —— 没有凭据就不能部署,搬迁无从开始。步骤本身见 [CUTOVER.md](CUTOVER.md) |
+| 生产还是单机(集群里 `prod_` 服务数 0)。原来卡在两个挂载和个人令牌,2026-08-26 都已解决 | 现在没有硬阻塞,按 [CUTOVER.md](CUTOVER.md) 执行即可。注意那份手册里 psi 的副本数与过期注释两条提醒 |
 
 已完成,勿重复提:`frontend`、`product-structure-information`、`skill-audit` 均已加
 `max_replicas_per_node: 1`,两副本实测分处两台。`preferences: spread` 只是偏好,单靠它滚动更新后会挤在
