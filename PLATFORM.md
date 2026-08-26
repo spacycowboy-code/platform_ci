@@ -4,10 +4,10 @@
 [CREDENTIALS.md](CREDENTIALS.md);需求清单逐条到哪了见 [ROADMAP.md](ROADMAP.md)。
 
 把生产切到集群的一次性步骤见 [CUTOVER.md](CUTOVER.md) —— **生产还没有搬**,测试环境已按那套顺序
-走过一遍(2026-08-14)。生产搬迁现在卡在镜像仓库凭据。
+走过一遍(2026-08-14)。
 
-**先看一眼 [CREDENTIALS.md](CREDENTIALS.md) 开头**:镜像仓库凭据已经删除(原来用的是别人的服务账号),
-所以现在构建和部署都是停着的。
+镜像空间 2026-08-26 从 `proj-rvc`(RVC 项目的空间)换成我们自己的 `proj-rp-ps-ai`,当前推镜像用的
+是个人账号而不是服务账号,细节见 [CREDENTIALS.md](CREDENTIALS.md)。
 
 要找具体的东西:
 
