@@ -170,7 +170,7 @@ ERIDOC_PROD_ENV
 在所有仓里搜过,**零引用** —— 没有任何流水线或代码用它。
 
 建议:删掉这个变量。我们不该存别人的个人凭据,而且它没有用途。
-删变量不影响她的令牌本身。
+删掉变量不影响那个令牌本身。
 
 ### skill-audit-engine-read
 
@@ -181,7 +181,7 @@ ERIDOC_PROD_ENV
 
 ---
 
-## 挂在离职者个人身份上的东西
+## 挂在个人账号上的东西
 
 ### 个人 GitLab 令牌
 
@@ -190,10 +190,10 @@ ERIDOC_PROD_ENV
 
 ### 机器上的 ssh 公钥
 
-manager 节点(`node-100-78-224-45`)的 `authorized_keys` 里有离职者一行,并且有免密 sudo。
+manager 节点(`node-100-78-224-45`)的 `authorized_keys` 里有一行个人公钥,对应账号有免密 sudo。
 老机器(`node-100-77-162-66`)的 `authorized_keys` 里没有,走的是别的机制。
 
-接手的人要能上这两台机器,得自己的公钥进 `authorized_keys` —— 部署流水线用的是
+接手的人要能上这两台机器,得把自己的公钥加进 `authorized_keys` —— 部署流水线用的是
 `DEPLOY_SSH_KEY` / `SWARM_SSH_KEY`,和个人访问是两条路,流水线不受个人离职影响。
 
 ---

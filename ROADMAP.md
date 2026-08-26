@@ -63,7 +63,7 @@ proxyAddresses`,并去掉 Windows 的 `DOMAIN\name` 前缀。
 
 token 是无状态 JWT(`app/services/auth_tokens.py`),所以多副本之间不需要粘性会话。
 
-### 🔴 API 级别权限控制:有认证,但授权不可信
+### 🟡 API 级别权限控制:身份已可信,剩一处可见性过滤没改
 
 **认证**是全局中间件(`app/main.py` 的 `auth_gate`):除白名单外,任何 `/api/` 请求没有有效
 JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users` 都是 401,
@@ -73,13 +73,17 @@ JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users`
 
 * 中间件把可信身份放在 `request.state.eid`(来自 token 的 `sub`),注释也写明"让处理函数可以
   信任身份而不是客户端字段"
-* 但生产容器里的代码,`market.py` **6 处**、`skills.py` **2 处**用的都是
-  `x_user_eid: str | None = Header(None)` —— **客户端自己填的 HTTP 头**,`request.state.eid`
-  一处都没用
-* 管理员判定是字面量比较 `requester == "ADMINMM"`,不是配置项 `settings.audit_admin_eid`
+* 原来 `market.py` 与 `skills.py` 取身份用的都是客户端自己填的 `X-User-EID` 头。**这部分已经修了**:
+  现在走 `acting_eid(request, ...)`,优先用 token 里的身份,客户端声明只在 `auth_enabled=false` 时兜底。
+  上传、编辑、下载、分类管理都已改过。管理员判定也换成了配置项 `settings.audit_admin_eid`,
+  `market.py` 里的 `"ADMINMM"` 字面量现在是 0 处。
 
-**还差什么**:把那 8 处换成 `request.state.eid`,把字面量换成配置项。改动很小,但在服务仓里,
-属于该仓的维护者。
+* **还剩一处**:`app/routers/skills.py` 的 `list_skills`(`GET /api/skills`)用
+  `normalize_eid(x_user_eid)` 决定可见性,没走 `acting_eid`。后果是把请求头填成 `ADMINMM` 就能列出
+  待复核与被拒的技能,填成别人的 EID 就能看到那个人未通过的技能。它只影响列表的可见范围,不影响
+  上传门禁。
+
+**还差什么**:把 `list_skills` 那一处换成 `acting_eid(request, x_user_eid)`。一行的改动,在服务仓里。
 
 ---
 
@@ -113,8 +117,8 @@ JWT 一律 401。实测生产 `/api/skills`、`/api/market/items`、`/api/users`
 
 **负载均衡现在对前端、psi、审计引擎成立**(各 2 副本、一台一个),剩下的还不行,这一条要跟需求方对齐
 预期。每个服务能不能多副本、依据是什么,逐个查过,表在 [PLATFORM.md](PLATFORM.md)。卡住的原因分两类:
-本地状态要服务侧改(rtep 的 SQLite、判定器的登录卷、grafana 的库),或者环境描述里的挂载要删(审计后端
-的代码已经不依赖工作副本了,挂载还在)。
+本地状态要服务侧改(rtep 的 SQLite、判定器的登录卷、grafana 的库),或者环境描述里的挂载要删。审计后端这一条已经
+解决:代码不依赖工作副本,两个挂载也已于 2026-08-26 删除。
 
 ### ✅ 端口动态分配
 
