@@ -42,7 +42,7 @@ spec:
 
 variables:
   REGISTRY: "armdocker.rnd.ericsson.se"
-  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/python-base:3.12-b3708562"
+  BASE_IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/python-base:3.12-80792a67"
   IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/$[[ inputs.service ]]"
   EXTRA_IMAGE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/$[[ inputs.extra_service ]]"
   # kaniko 的层缓存仓。与镜像同一路径前缀,所以推镜像的那套凭据就能写。
