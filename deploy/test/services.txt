@@ -11,3 +11,6 @@ rp-ai-portal-fe: swarm
 traefik: swarm
 product-structure-information: swarm
 skill-audit: swarm
+sequence-diagram-judge: swarm
+sequence-diagram: swarm
+
