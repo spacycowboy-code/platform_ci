@@ -197,7 +197,11 @@ backup-portal-facts:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $BACKUP == "true"'
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: manual
-      allow_failure: false
+      # allow_failure 必须是 true。它在 check 阶段,而 `when: manual` 加 `allow_failure: false`
+      # 会把整条流水线标成 blocked —— 后面的 publish 与 deploy 阶段永远不开始。实际撞到过:
+      # 换镜像空间那次合并,publish-base 一直停在 created,因为这个按钮没人点。
+      # 定时跑的那条规则不带 allow_failure(默认 false),所以定时备份失败照样让流水线红,这一点不变。
+      allow_failure: true
   script:
     - |
       : "${DEPLOY_SSH_KEY:?未设置}"; : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"
