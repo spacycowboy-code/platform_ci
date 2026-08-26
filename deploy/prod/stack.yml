@@ -37,7 +37,7 @@ services:
 
   # ---------- 已搬进集群的服务(一律不发布端口)----------
   psi:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG}
     env_file:
       # 文件名与 env-files.txt 里的目标名一致,由部署任务投放
       - product-structure-information.env

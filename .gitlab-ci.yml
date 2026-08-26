@@ -9,7 +9,7 @@ stages: [check, publish, deploy]
 
 variables:
   REGISTRY: "armdocker.rnd.ericsson.se"
-  BASE: "armdocker.rnd.ericsson.se/proj-rvc/rp-ai/python-base"
+  BASE: "armdocker.rnd.ericsson.se/proj-rp-ps-ai/python-base"
   PY_VERSION: "3.12"
 
 check-templates:

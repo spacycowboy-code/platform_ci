@@ -9,7 +9,7 @@
 # PSI_PROD_ENV 投放到本目录。
 services:
   eridoc-client:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/eridoc-client:${ERIDOC_CLIENT_TAG:-not-deployed}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/eridoc-client:${ERIDOC_CLIENT_TAG:-not-deployed}
     container_name: eridoc-client
     restart: unless-stopped
     env_file:
@@ -43,7 +43,7 @@ services:
       start_period: 15s
 
   product-structure-information:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-925f24b0}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-925f24b0}
     container_name: product-structure-information
     restart: unless-stopped
     env_file:
@@ -62,7 +62,7 @@ services:
       start_period: 15s
 
   rtep-flow-manager:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rtep-flow-manager:${RTEP_FLOW_MANAGER_TAG:-ce5a702d}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rtep-flow-manager:${RTEP_FLOW_MANAGER_TAG:-ce5a702d}
     container_name: rtep-flow-manager
     restart: unless-stopped
     ports:
@@ -83,7 +83,7 @@ services:
   # agent-artifex 属于本环境但当前不运行(容器自 2026-08-05 起是 Exited)。
   # profiles 让 docker compose up 跳过它;删掉 profiles 两行即启动。
   audit-backend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-f33b3587}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-f33b3587}
     container_name: ai-portal-be-backend
     restart: unless-stopped
     env_file:
@@ -126,7 +126,7 @@ services:
       start_period: 15s
 
   audit-reconciler:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-f33b3587}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG:-f33b3587}
     container_name: ai-portal-be-reconciler
     restart: unless-stopped
     env_file:
@@ -145,7 +145,7 @@ services:
   #
   # 无状态:不挂卷,结果全在响应里返回,由门户的 gate 落库。单机形态下就一个实例。
   skill-audit:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit:${SKILL_AUDIT_TAG:-a17952ee}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/skill-audit:${SKILL_AUDIT_TAG:-a17952ee}
     container_name: ai-portal-be-audit-engine
     restart: unless-stopped
     env_file:
@@ -167,7 +167,7 @@ services:
       start_period: 20s
 
   audit-judge:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG:-f33b3587}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/skill-audit-judge:${SKILL_AUDIT_JUDGE_TAG:-f33b3587}
     container_name: ai-portal-be-judge
     restart: unless-stopped
     env_file:
@@ -212,7 +212,7 @@ services:
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
   frontend:
-    image: armdocker.rnd.ericsson.se/proj-rvc/rp-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-63acaea6}
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-63acaea6}
     container_name: rp-ai-portal-fe
     restart: unless-stopped
     ports:
