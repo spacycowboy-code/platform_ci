@@ -303,6 +303,12 @@ apply-release:
         tr -d '\r' < "$KEY_SRC" > ~/.ssh/id_deploy
         printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
         SSHB="-i $HOME/.ssh/id_deploy -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        # 先同步环境描述,再重放版本号。少了这一步,重放出来的是"机器上那份描述 + 这组版本",
+        # 描述改过之后就复现不出目标状态 —— 换镜像空间那次就是这样:版本重放成功,但机器上的
+        # compose.yml 还是旧的镜像路径,于是拉的还是旧空间的镜像。
+        # 排除 *.env:密钥与本环境的版本记录由部署任务维护,不在 git 里。
+        ssh $SSHB "$USER@$HOST" "mkdir -p '$DIR' && chmod 750 '$DIR'"
+        rsync -az --delete --exclude ".env" --exclude "*.env" -e "ssh $SSHB" "$ENV_DIR/" "$USER@$HOST:$DIR/"
         if [ "$MODE" = swarm ]; then
           scp $SSHB templates/swarm-apply.sh "$USER@$HOST:$DIR/swarm-apply.sh"
           ssh $SSHB "$USER@$HOST" "chmod +x '$DIR/swarm-apply.sh' && '$DIR/swarm-apply.sh' '$RELEASE_ENV' $PAIRS"
