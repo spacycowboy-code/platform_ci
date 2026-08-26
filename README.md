@@ -53,7 +53,7 @@ MR 里需要说明的就是这几项:服务名(也是镜像名)、要上哪些�
 |---|---|---|
 | 1 | 服务仓,自动 | `lint` / `test` / `build`。**`build` 只验证能不能构建,不推镜像** |
 | 2 | 服务仓,手动点按钮 | `deploy-prod`(仅 `main`)或 `deploy-test`(任意分支) |
-| 3 | **GitLab runner 的容器里** | 用 kaniko 构建镜像并推到 Artifactory。路径原为 `armdocker.rnd.ericsson.se/proj-rvc/rp-ai/<服务>:<commit sha>`,`proj-rvc` 是别人的空间,换成我们自己的账号时这个前缀要一起改 |
+| 3 | **GitLab runner 的容器里** | 用 kaniko 构建镜像并推到 Artifactory:`armdocker.rnd.ericsson.se/proj-rp-ps-ai/<服务>:<commit sha>` |
 | 4 | platform-ci 的下游流水线(点按钮后自动出现) | ssh 到部署机:同步该环境的 compose 与配置、投放密钥、把这个服务的版本写进部署机的 `.env` |
 | 5 | 部署机 `100.77.162.66` | `docker compose pull` + `up -d`,**只重建这个服务的容器** |
 
