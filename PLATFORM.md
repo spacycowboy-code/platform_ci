@@ -392,7 +392,7 @@ glab api --method PUT runners/581505 -f paused=false
 
 ### 缓存仓要定期清
 
-`proj-rvc/rp-ai/build-cache` 只会长:kaniko 的 `--cache-ttl`(默认 336h)过期后只是不再采用,
+`proj-rp-ps-ai/build-cache` 只会长:kaniko 的 `--cache-ttl`(默认 336h)过期后只是不再采用,
 **不会删**。`prune-build-cache` 任务负责清理,按**最后一次被命中的时间**而不是创建时间 ——
 理由见 `tools/prune_build_cache.py` 的开头。它只在定时流水线里跑,且要 `PRUNE_APPLY=true`
 才真删。
