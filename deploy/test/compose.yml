@@ -28,6 +28,11 @@ services:
       # 由部署任务从 File 变量 AUDIT_TEST_ENV 投放。除库/LDAP/JWT 外,rp-ai-portal-be v1.5.0
       # 起还要 GITLAB_USER_AGENTS_TOKEN(rp-ai/rp-ai-user-agents 的 group access token,
       # Owner + api,write_repository)。缺了只影响 Agent 包上传:答 503 并说明原因。
+      #
+      # tool 也能传包那一版起,再多一项 GITLAB_USER_TOOLS_TOKEN:tool 的包进
+      # rp-ai/rp-ai-user-tools,那是另一个组,而**组访问令牌只能访问它所属的那一个组** ——
+      # 所以这是第二个凭据,不是同一个值换个名字。缺了只影响 tool 包上传,答 503 并点名这个
+      # 变量;agent 那条路照常。
       - audit-test.env
     # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
     # http://audit-judge:8790/v1)。这里原来有一行 AUDIT_JUDGE_URL,两个仓的代码都没有这个字段,
