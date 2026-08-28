@@ -228,6 +228,17 @@ services:
     # GITLAB_USER_AGENTS_TOKEN(理由见 deploy/test/compose.yml 里的说明);缺了只影响 Agent
     # 包上传,答 503。tool 也能传包那一版起再多一项 GITLAB_USER_TOOLS_TOKEN —— 另一个组、
     # 另一个组访问令牌,缺了只影响 tool 包上传。
+    #
+    # **这个环境目前没有配提交签名密钥(GIT_SIGNING_KEY),所以 test 上的包上传会失败。**
+    # 上传的目标组开着 GitLab 的「Reject unsigned commits」推送规则,门户不签名就会在最后
+    # 一步被 pre-receive 钩子拒收;门户会答 503 并点名这个变量,不会静默失败。
+    #
+    # 要在 test 上启用它,**不能照生产那样 bind mount 一个密钥目录**:这个服务下面刻意
+    # 取消了机器绑定(见 deploy 那一段的注释),bind mount 会把它悄悄钉回一台机器,或者副本
+    # 落到没有那个文件的节点上、只在有人上传时才失败。swarm 里该用的是 docker secret ——
+    # 它跟着任务分发到实际运行的节点。做这件事的人改这里:两个 secret(私钥 portal-signing
+    # 与公钥 portal-signing.pub,target 名必须是这两个,因为 ssh-keygen 按同名去掉 .pub 找
+    # 私钥),然后加 GIT_SIGNING_KEY=/run/secrets/portal-signing.pub。
     env_file: [audit-test.env]
     # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
     # http://audit-judge:8790/v1)。这里原来有一行 AUDIT_JUDGE_URL,两个仓的代码都没有这个字段,

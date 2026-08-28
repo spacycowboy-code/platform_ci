@@ -134,6 +134,32 @@
 PAT),不是这两个组令牌。** 那个 PAT 在新组里没有可读身份时,现象是上传成功、审核页正常,
 而别人点下载拿到 GitLab 的 403/404。
 
+### 门户提交签名用的 SSH 密钥
+
+上传的两个目标组开着 GitLab 的「Reject unsigned commits」推送规则,而门户是
+`git init/commit/push` 发布的。不签名的后果实测过:包解开了、GitLab 项目建好了,`git push`
+被 pre-receive 钩子拒收(`Commit must be signed with a GPG key`),两个 ref 一起 rejected。
+
+* 生产:`/proj/rp_ait_prod/secrets/portal-signing/` 下两个文件 —— `portal-signing`(私钥,
+  0600)与 `portal-signing.pub`,由 `deploy/prod/compose.yml` 以只读挂到
+  `/etc/portal-signing`;路径写在同一份 compose 的 `environment` 里
+  (`GIT_SIGNING_KEY`),**不是密钥所以不进 File 变量**
+* 指纹 `SHA256:KIfvQ5r7/a2RT7DxRgzI/QYGnlJl3EzQALezIQofxc0`(ed25519,无 passphrase ——
+  容器里没有 ssh-agent 能解锁一个带密码的密钥)
+* 测试环境**还没配**,所以 test 上的包上传会答 503 并点名这个变量。原因和该怎么配见
+  `deploy/test/stack.yml` 里 `env_file` 旁边那段(要 docker secret,不能 bind mount)
+* 失效或漏挂了会坏:只影响包上传(tool 与 agent 两条都是),技能相关功能不受影响。门户在
+  **建 GitLab 项目之前**检查这两个文件,所以漏挂不会留下半成品项目
+
+**公钥必须挂在某个 GitLab 账号的 SSH signing keys 上**(Preferences → SSH Keys,Usage type
+选 Signing)。组访问令牌的 bot 用户加不了密钥,所以只能是真人或服务账号 —— 这也是这条方案
+唯一的残余风险:如果那条推送规则要求签名可归属到**推送者本人**,而门户是用组令牌的机器身份
+推的,签了仍然会被拒。门户对这种情况有专门的报错文案,一传就知道。
+
+为什么是 SSH 而不是 GPG:镜像里没有 gpg(实测 `command -v gpg` 为空),有 openssh-client
+自带的 ssh-keygen;git 是 2.47.3,`commit -S` 和 `tag -s` 都支持 SSH 格式,而这个实例的那条
+规则接受 SSH 签名。
+
 ---
 
 ## 不是 GitLab 令牌的共享密钥

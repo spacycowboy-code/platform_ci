@@ -33,6 +33,10 @@ services:
       # rp-ai/rp-ai-user-tools,那是另一个组,而**组访问令牌只能访问它所属的那一个组** ——
       # 所以这是第二个凭据,不是同一个值换个名字。缺了只影响 tool 包上传,答 503 并点名这个
       # 变量;agent 那条路照常。
+      #
+      # 提交签名密钥(GIT_SIGNING_KEY)不在这份文件里:路径不是密钥,写在 stack.yml/compose.yml
+      # 的 environment 里看得见。这个环境还没配它,所以 test 上的包上传会答 503 —— 理由和
+      # 该怎么配见 deploy/test/stack.yml 里 env_file 旁边那段。
       - audit-test.env
     # 判定器地址不在这里配:调它的是**引擎**,用的是 audit_llm_base_url(默认
     # http://audit-judge:8790/v1)。这里原来有一行 AUDIT_JUDGE_URL,两个仓的代码都没有这个字段,
