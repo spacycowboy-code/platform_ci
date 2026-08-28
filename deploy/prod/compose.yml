@@ -113,6 +113,13 @@ services:
       # 审计引擎。地址写在这里(与判定器同一模式),token 在 AUDIT_PROD_ENV 里 —— 地址不是密钥,
       # 放在描述文件里看得见;token 是。
       AUDIT_ENGINE_URL: "http://skill-audit:8000"
+      # 门户给自己的提交签名用的**公钥路径**。路径不是密钥,所以和上面那条同一个理由:写在
+      # 这里看得见,不进 File 变量。密钥文件本身由下面的只读挂载提供。
+      #
+      # 为什么需要它:上传包的目标组(rp-ai/rp-ai-user-tools、rp-ai/rp-ai-user-agents)开着
+      # GitLab 的「Reject unsigned commits」推送规则,而门户是 git init/commit/push 发布的。
+      # 不配这一项时包上传会走到最后一步才被 pre-receive 钩子拒收,门户答 503 并点名这个变量。
+      GIT_SIGNING_KEY: "/etc/portal-signing/portal-signing.pub"
     ports:
       - "9000:8000"
     volumes:
@@ -120,9 +127,16 @@ services:
       # 只剩日志。技能仓的工作副本和推送私钥已经去掉:内容按引用走 GitLab 接口读写,鉴权是
       # portal-skill-repo-prod 这个项目访问令牌(api + Developer + main 推送白名单)。
       - /proj/rp_ait_prod/logs/ai-portal-be:/app/logs
-      # 推技能仓用的部署密钥,只读。
-      # 推技能仓用的部署密钥,只读。路径仍在旧部署目录下,因此该目录不能退役;
-      # 终态是像其它环境密钥一样由部署任务投放(见 DESIGN.md 待别人处理)。
+      # 门户给自己的提交签名用的密钥对,只读。目录里两个文件:portal-signing(私钥,0600)和
+      # portal-signing.pub。容器以 root 跑,所以读得到 0600 的那个。
+      #
+      # **两个都要挂**:GIT_SIGNING_KEY 指的是公钥,而 `ssh-keygen -Y sign` 按同名去掉 .pub
+      # 找私钥 —— 只挂公钥的话看起来完全正常,签名时才失败,而报错来自 ssh-keygen、措辞离原因
+      # 很远。门户现在会在建 GitLab 项目**之前**检查这两个文件,缺哪个都直接答 503 并说明。
+      #
+      # 密钥不能有 passphrase:容器里没有 ssh-agent 能解锁它。公钥要挂在某个 GitLab 账号的
+      # SSH signing keys 上(组访问令牌的 bot 用户加不了密钥),见 CREDENTIALS.md。
+      - /proj/rp_ait_prod/secrets/portal-signing:/etc/portal-signing:ro
     depends_on:
       - audit-judge
     healthcheck:
