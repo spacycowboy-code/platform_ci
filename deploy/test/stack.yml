@@ -199,6 +199,17 @@ services:
   fi-analysis:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/fi-analysis:${FI_ANALYSIS_TAG}
     networks: [inner]
+    # fi-analysis.env(File 型 CI 变量 FI_ANALYSIS_TEST_ENV)里的键 —— 那份文件不在 git 里,
+    # 键的存在在这个仓库中完全不可见,所以按 PLATFORM.md 的约定列在这里:
+    #   AUTH_MODE=token        引擎侧鉴权形态。这个服务接收上传的内部文档并落盘,不要改成 none
+    #   ENGINE_TOKEN           使用者在界面上粘的那串。为空时服务**拒绝启动**(刻意的)
+    #   LLM_API_BASE           指向 fi-analysis-judge
+    #   LLM_API_KEY            引擎认判定器用,必须与下面的 FI_JUDGE_TOKEN 同值,否则每次分析 401
+    #   FI_JUDGE_TOKEN         判定器侧校验的那一串(同上)
+    #   FI_KIRO_MODEL          判定器用哪个模型
+    #   FI_JUDGE_TIMEOUT=300   一次收敛的总预算(秒)。候选多时 30 秒必超,所以不是默认值
+    #   LLM_HTTP_TIMEOUT=330   引擎等判定器的 HTTP 超时,**必须大于上一个**,否则判定器给出的
+    #                          具体失败原因(未登录、模型名错)会被引擎的超时吞掉
     env_file: [fi-analysis.env]
     healthcheck:
       # 只证明进程活着。刻意不探判定器 —— 探它要真跑一次 ACP(几分钟、花配额),而健康检查失败
@@ -357,6 +368,9 @@ services:
   fi-analysis-judge:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/fi-analysis-judge:${FI_ANALYSIS_JUDGE_TAG}
     networks: [inner]
+    # 和引擎共用同一份 .env(键的清单见上面 fi-analysis 的注释)。判定器只用到其中三个:
+    # FI_JUDGE_TOKEN(校验引擎)、FI_KIRO_MODEL、FI_JUDGE_TIMEOUT。共用一份的理由是
+    # LLM_API_KEY 与 FI_JUDGE_TOKEN 必须同值 —— 分成两份文件迟早会漂,而漂了的现象是 401。
     env_file: [fi-analysis.env]
     volumes:
       # kiro-cli 的登录状态。**不在任何备份里**,失效只能人工重新 kiro-cli login。
