@@ -13,9 +13,21 @@ providers:
     # (三个面板被改成 table 并重排布局),卷一旦重建看板会悄悄变回文件里的样子。
     #
     # 改成 false 能让"文件即真相"成立(实测界面保存会被拒:400 Cannot save provisioned
-    # dashboard;新建看板不受影响),但前提是"改看板能发布"—— 而 grafana 不在 services.txt 里,
-    # 现在没有任何流水线会同步它的配置。所以先保留 true,等发布路径补上再定。
+    # dashboard;新建看板不受影响)。发布这条路已经有了:.gitlab-ci.yml 里的
+    # deploy-grafana-config 是 main 上的手动按钮,把本目录发到机器上。缺的是**回流** ——
+    # 没有任何东西把界面上的改动导回这个仓库,所以分叉是隐形的。补上"导出看板 → 与本目录比
+    # → 不一致就开 MR"之后,这一行保持 true 才算自洽;在那之前,谁改了什么只有数据卷知道。
+    #
+    # 2026-08-30 实测:线上那份 skill-metrics 与本目录里的文件逐字段一致(忽略
+    # id/version/uid),数据卷里也没有 annotation、告警规则、库面板、播放列表 —— 就是说
+    # 此刻整个卷里没有一样不可重建的东西。这个结论会随着有人动手改看板而失效。
+    allowUiUpdates: true
+    # 2026-08-30 实测:线上那份 skill-metrics 与本目录里的文件逐字段一致(忽略
+    # id/version/uid),数据卷里也没有 annotation、告警规则、库面板、播放列表 —— 就是说
+    # 此刻整个卷里没有一样不可重建的东西。这个结论会随着有人动手改看板而失效。
     allowUiUpdates: true
     options:
-      path: /var/lib/grafana/dashboards
+      # 与 compose.yml 里那条 ./grafana/dashboards 的挂载点必须一致。刻意不放在
+      # /var/lib/grafana 下面 —— 那是数据卷,理由写在 compose.yml 的挂载处。
+      path: /etc/grafana/dashboards
       foldersFromFilesStructure: false
