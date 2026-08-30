@@ -165,7 +165,8 @@ services:
   # 门户镜像里已经不装扫描器了,所以**这个服务必须先在生产跑起来,再部署门户**;顺序反了的话,门户
   # 每次审计都拿不到结论 —— 新上传全部转人工复核,重发布已上线技能返回 503。
   #
-  # 无状态:不挂卷,结果全在响应里返回,由门户的 gate 落库。单机形态下就一个实例。
+  # 无状态:审计结果全在响应里返回,由门户的 gate 落库,容器自己不存业务数据。单机形态下就一个实例。
+  # 下面那个挂载是**只写的诊断输出**,不是状态:删掉它服务照跑,只是事后查不到现场。
   skill-audit:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/skill-audit:${SKILL_AUDIT_TAG:-a17952ee}
     container_name: ai-portal-be-audit-engine
@@ -179,6 +180,14 @@ services:
     # 它把主链路拖垮是不可接受的交换。数值与测试环境一致。
     mem_limit: 2g
     cpus: "2.0"
+    volumes:
+      # 日志。此前这两个服务只写 stdout,进 json-file 驱动 —— 容器一重建现场就没了,而
+      # "扫描为什么给了这个结论"这类问题都是事后才被问起的。镜像里 skill-audit 仓根目录的
+      # log_conf.yaml 让 uvicorn 同时写 stdout 和 /app/logs/{backend,access}.log(10 MB × 5)。
+      #
+      # **和判定器必须是两个不同的目录**:RotatingFileHandler 滚动时是 rename + 重开,两个容器
+      # 写同一个文件的话,滚动后一方还握着改名前的 inode 继续写,那些行就再也找不到了。
+      - /proj/rp_ait_prod/logs/skill-audit:/app/logs
     healthcheck:
       # 只证明进程活着。它不检查判定器与扫描器 —— 引擎 healthy 不等于审计链路 healthy。
       test: ["CMD", "python", "-c",
@@ -209,6 +218,9 @@ services:
       # 换目录就会挂到一对空卷上,判定器表现为未登录,所有上传 fail-closed 转复核。
       - judge-kiro-home:/root/.kiro
       - judge-kiro-share:/root/.local/share/kiro-cli
+      # 日志,与引擎同一套配置但**另一个目录**(理由见引擎那一段)。判定器的日志比引擎更该留:
+      # "未登录"这个故障在业务上只表现为"所有上传都转复核",真正的原因写在它自己的输出里。
+      - /proj/rp_ait_prod/logs/skill-audit-judge:/app/logs
 
   grafana:
     image: grafana/grafana:11.1.0
