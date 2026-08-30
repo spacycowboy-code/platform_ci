@@ -129,6 +129,11 @@ services:
   #
   # 无状态:不存任何东西,不挂卷,结果全在响应里返回,由门户的 gate 落库。所以可以两副本跨节点。
   # 不发布端口:同一 overlay 内按服务名访问,鉴权靠 ENGINE_TOKEN(它为空时服务拒绝启动)。
+  #
+  # 生产那份给它挂了 /proj/rp_ait_prod/logs/skill-audit,**这里刻意不挂** —— 同 product-structure-information
+  # 上面那条:那个路径只在一台机器上,挂了就把副本钉死在那台,而这个服务的整个 placement 配置都是
+  # 为了两副本落在两台机器上。镜像里的 log_conf.yaml 照样在写 /app/logs,只是那是容器内的临时盘,
+  # 用 `docker service logs test_skill-audit` 看 stdout 就够了(同一份内容)。
   skill-audit:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/skill-audit:${SKILL_AUDIT_TAG}
     networks: [inner]
