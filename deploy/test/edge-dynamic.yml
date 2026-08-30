@@ -39,6 +39,24 @@ http:
       entryPoints: [web]
       middlewares: [seqdiag-slash-redirect]
       service: seqdiag
+    # FI 分析工具。和 seqdiag 同样的做法:自己的前缀 + stripPrefix。
+    # 那个服务的前端资源与 API 调用**都是相对路径**(app.css / api/jobs),所以 strip 之后
+    # 前后端对得上,服务本身不需要知道自己挂在哪个前缀下。
+    fi:
+      rule: "PathPrefix(`/fi/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [fi-strip]
+      service: fi
+    # 少一个尾斜杠时重定向。不做这件事的话 /fi 匹配不上上面那条,会落到优先级 1 的 fe,
+    # 用户看到的是门户前端 —— 现象离原因很远。而且相对路径的 API 调用要靠尾斜杠才解析正确
+    # (没有尾斜杠时 `api/jobs` 会被解析成 /api/jobs,那条路径在边缘上属于审计后端)。
+    fi-slash:
+      rule: "Path(`/fi`)"
+      priority: 110
+      entryPoints: [web]
+      middlewares: [fi-slash-redirect]
+      service: fi
     fe:
       rule: "PathPrefix(`/`)"
       priority: 1
@@ -63,6 +81,14 @@ http:
         regex: "^(https?://[^/]+)/seqdiag$"
         replacement: "${1}/seqdiag/"
         permanent: true
+    fi-strip:
+      stripPrefix:
+        prefixes: ["/fi"]
+    fi-slash-redirect:
+      redirectRegex:
+        regex: "^(https?://[^/]+)/fi$"
+        replacement: "${1}/fi/"
+        permanent: true
 
   services:
     fe:
@@ -81,3 +107,7 @@ http:
     seqdiag:
       loadBalancer:
         servers: [{url: "http://sequence-diagram:8000"}]
+    fi:
+      loadBalancer:
+        servers: [{url: "http://fi-analysis:8000"}]
+

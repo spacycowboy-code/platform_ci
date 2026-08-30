@@ -188,6 +188,43 @@ services:
         limits: {cpus: "2.0", memory: 2G}
         reservations: {memory: 256M}
 
+  # Feature & Function Interaction 分析的引擎(仓库 rp-ai-miao/feature-and-function-interaction-analysis)。
+  # 上传 NDS/OA/SA → 三层知识库检索 → LLM 收敛 → FI 分析 PPT + ego 冲突图。
+  # 它自己不持有模型凭据,通过 LLM_API_BASE 指向下面的 fi-analysis-judge。
+  #
+  # **单副本,和 sequence-diagram 不同。** 一次分析要几分钟,所以是作业式的:前端拿到 job_id
+  # 之后轮询进度,产物落在容器的 /tmp/fi-jobs/<job_id>/。作业状态在内存里 —— 两个副本时
+  # 轮询会打到另一个副本上,表现是"作业不存在"。要多副本得先把作业状态挪到共享存储。
+  # 同理不挂卷:产物只在本次会话里能下载,进程重启即丢(服务仓 DEPLOY.md 里写明了这个取舍)。
+  fi-analysis:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/fi-analysis:${FI_ANALYSIS_TAG}
+    networks: [inner]
+    env_file: [fi-analysis.env]
+    healthcheck:
+      # 只证明进程活着。刻意不探判定器 —— 探它要真跑一次 ACP(几分钟、花配额),而健康检查失败
+      # 会让编排换掉容器。判定器登录态失效的表现是每次分析都失败,不是引擎 unhealthy。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 比 sequence-diagram 长:这个镜像启动时要 import 的东西多(openpyxl / python-pptx /
+      # markitdown 那条链),冷启动明显慢一截。
+      start_period: 40s
+    deploy:
+      # 见上面:单副本是这个服务的约束,不是保守取值。
+      replicas: 1
+      restart_policy: {condition: any}
+      # start-first:单副本 + 无卷,新任务可以先起来,切换时不留空窗。
+      update_config: {order: start-first, failure_action: rollback, monitor: 40s}
+      rollback_config: {order: start-first}
+      resources:
+        # 内存是这里的主项:一次分析要把三层知识库读进内存(CPI 292 条含 4500 字摘要、
+        # FD 1494 个功能、FS 2302 条需求),峰值几百 MB。进程内同时只跑一个分析(一位信号量),
+        # 所以 4G 够;调小了会在"载入 FS 知识库"那一步被 OOM kill,现象是分析中途消失。
+        limits: {cpus: "2.0", memory: 4G}
+        reservations: {memory: 512M}
+
   audit-reconciler:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-be:${RP_AI_PORTAL_BE_TAG}
     networks: [inner]
@@ -314,6 +351,33 @@ services:
       resources:
         limits: {cpus: "2.0", memory: 4G}
 
+  # FI 分析的判定器。和 sequence-diagram-judge 是**两个**服务,不能共用:两个服务共用一个
+  # kiro-cli 配置目录会互相踩(同一份凭据被两个容器同时写)。而且它们的端点 agent 不同 ——
+  # 这个用 fi-endpoint(要求回复是 JSON 数组),那个用 puml-endpoint(要求是 PlantUML)。
+  fi-analysis-judge:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/fi-analysis-judge:${FI_ANALYSIS_JUDGE_TAG}
+    networks: [inner]
+    env_file: [fi-analysis.env]
+    volumes:
+      # kiro-cli 的登录状态。**不在任何备份里**,失效只能人工重新 kiro-cli login。
+      - fi-kiro-home:/root/.kiro
+      - fi-kiro-share:/root/.local/share/kiro-cli
+    deploy:
+      # 单副本且必须钉住某一台:登录态在那台机器的命名卷里,调度到别处就是一对空卷。
+      # 钉在新机器(和 sequence-diagram-judge 同一台)。代价:CI runner 也在那台,
+      # 三个东西会抢 CPU。要换回老机器就把下面两行替换成 `placement: *pin`,
+      # 并把卷建到那台机器上。
+      replicas: 1
+      placement:
+        constraints: [node.hostname == node-100-78-224-45]
+      restart_policy: {condition: any}
+      # stop-first:卷是独占的,start-first 会让两个容器同时挂同一个 kiro 配置目录。
+      update_config: {order: stop-first}
+      resources:
+        # 一次收敛的预算是 300 秒(FI_JUDGE_TIMEOUT),候选 JSON 几十 KB。开销主要在
+        # kiro-cli 子进程上,内存给 4G 与 seqdiag 判定器持平。
+        limits: {cpus: "2.0", memory: 4G}
+
 configs:
   # 键名固定;真实对象名由内容哈希决定(见下),避免"忘记改版本号"导致静默不生效
   edge_static:
@@ -349,6 +413,16 @@ volumes:
   seqdiag-kiro-share:
     external: true
     name: seqdiag_judge-kiro-share
+  # FI 分析判定器的登录态。同样 external + 写死名字,同样**要先在跑它的那台机器上手工建**
+  # (钉在 node-100-78-224-45)。external 卷不存在时 stack deploy 直接失败:
+  #   ssh node-100-78-224-45 'docker volume create fi-analysis_judge-kiro-home;
+  #                           docker volume create fi-analysis_judge-kiro-share'
+  fi-kiro-home:
+    external: true
+    name: fi-analysis_judge-kiro-home
+  fi-kiro-share:
+    external: true
+    name: fi-analysis_judge-kiro-share
   db-data:
     external: true
     name: ai-portal-audit-staging_db-data

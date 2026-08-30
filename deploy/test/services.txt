@@ -13,4 +13,6 @@ product-structure-information: swarm
 skill-audit: swarm
 sequence-diagram-judge: swarm
 sequence-diagram: swarm
+fi-analysis-judge: swarm
+fi-analysis: swarm
 
