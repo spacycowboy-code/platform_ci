@@ -103,8 +103,11 @@ http:
         servers: [{url: "http://product-structure-information:8000"}]   # 测试环境自己的一份
     grafana:
       loadBalancer:
-        # 与 stack.yml 里那条 GRAFANA_UPSTREAM 同一个问题:生产的 grafana 已不对局域网
-        # 发布 9401,这个地址在集群里到不了。本层启用前先给 grafana 一个集群内的落点。
+        # 这个地址是活的,而且是**必需**的:验收环境是 swarm、两个节点各一个副本,traefik
+        # 刻意没有节点约束,所以它可能落在另一台机器上 —— 那时只有这台机器的局域网地址
+        # 够得着生产那份 grafana。2026-08-30 把生产的 9401 收成只绑回环+网桥网关,这里
+        # 立刻 502。代价写在 deploy/prod/compose.yml 的端口注释里(匿名 SQL 通道)。
+        # 要关掉那个洞,得先让这个环境有自己的 grafana 实例(两个 stack 都还没有)。
         servers: [{url: "http://100.77.162.66:9401"}]
     seqdiag:
       loadBalancer:
