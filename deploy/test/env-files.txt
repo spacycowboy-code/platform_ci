@@ -3,4 +3,6 @@ audit-test.env=AUDIT_TEST_ENV=swarm
 product-structure-information.env=PSI_TEST_ENV=swarm
 skill-audit.env=SKILL_AUDIT_TEST_ENV=swarm
 sequence-diagram.env=SEQUENCE_DIAGRAM_TEST_ENV=swarm
+# 引擎与判定器共用一份:LLM_API_KEY 与 FI_JUDGE_TOKEN 必须同值,分成两份迟早会漂。
+fi-analysis.env=FI_ANALYSIS_TEST_ENV=swarm
 
