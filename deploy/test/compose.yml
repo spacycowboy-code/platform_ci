@@ -101,6 +101,9 @@ services:
       AUDIT_UPSTREAM: "http://host.docker.internal:9100"
       # 产品结构与 grafana 这台机器上各只有一份,验收环境直接指过去。
       PSI_UPSTREAM: "http://host.docker.internal:9010"
+      # host.docker.internal 解析到 docker0 网关(172.17.0.1),而生产那份 grafana 正是
+      # 绑在回环加这个网关上、刻意不对局域网发布(见 deploy/prod/compose.yml 的理由)。
+      # 所以这一行依赖那条发布规则,改动生产那边的端口绑定时要一起看这里。
       GRAFANA_UPSTREAM: "http://host.docker.internal:9401"
       # 这个环境没有 eridoc 实例。变量仍然必须给:前端镜像的 nginx 模板里有一条
       # proxy_pass ${ERIDOC_UPSTREAM}/api/,未设置会被 envsubst 渲成空串,整份配置非法,

@@ -227,12 +227,26 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
     ports:
-      - "9401:3000"
+      # 不对局域网发布。上面开着匿名 Viewer,而 Skill DB 数据源是 proxy 模式,两者叠加
+      # 等于"任何能到这个端口的人都能不登录对门户库跑 SQL"—— 实测过:匿名 POST
+      # /api/ds/query 带 rawSql 直接返回结果,而那台 MySQL 上还有别的团队的库。
+      # 改这两行之前先读懂它们各自是给谁用的:
+      #   127.0.0.1  本机排障(与 frontend 的 8901 同一个用法)
+      #   172.17.0.1 docker0 网关,也就是 extra_hosts 里 host-gateway 解析到的地址。
+      #              同机其它 compose 项目通过 host.docker.internal:9401 访问本服务,
+      #              验收环境的前端就是这么指过来的(它自己没有 grafana 实例)。
+      #              网关地址变了(docker --host-gateway-ip)这一行要跟着改。
+      - "127.0.0.1:9401:3000"
+      - "172.17.0.1:9401:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       # 数据源与仪表盘定义随环境描述一起同步过去,不再从服务器上的源码目录挂。
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # 刻意挂在 /etc 下而不是 /var/lib/grafana/dashboards:后者在数据卷里面,宿主机上
+      # 源目录缺失时 docker 会在卷里造一个空目录,再叠上 provider 的 disableDeletion: false
+      # 就成了"看板被静默删除"的路径。挂在 /etc 下之后,数据卷里只剩 grafana 自己的状态。
+      # 这个路径与 provisioning/dashboards/provider.yml 的 options.path 必须一致。
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
 
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。

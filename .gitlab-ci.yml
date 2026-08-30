@@ -128,6 +128,11 @@ deploy-grafana-config:
       : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"; : "${DEPLOY_SSH_KEY:?未设置}"
       SRC="deploy/$GRAFANA_ENV/grafana"
       test -d "$SRC" || { echo "$SRC 不存在"; exit 1; }
+      # 目录存在但里面是空的必须拦住:下面那条 rsync 带 --delete,空目录会把机器上的看板
+      # 清空,而 provider 的 disableDeletion 是 false —— grafana 30 秒后把看板从自己的库里
+      # 删掉,界面上的改动一起消失(那些改动只存在于数据卷里,仓库里没有副本)。
+      # 从 git 里删掉一个看板仍然照常生效,拦的只是"全空"这一种情况。
+      ls -1 "$SRC"/dashboards/*.json >/dev/null 2>&1 || { echo "$SRC/dashboards 里没有任何 .json,拒绝同步"; exit 1; }
       case "$GRAFANA_ENV" in
         test) HOST_DIR=/proj/rp_ait_prod/services/test-env ;;
         prod) HOST_DIR=/proj/rp_ait_prod/services/prod-env ;;
@@ -138,26 +143,38 @@ deploy-grafana-config:
       tr -d '\r' < "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
       printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
       ssh-keygen -y -P "" -f ~/.ssh/id_deploy >/dev/null || { echo "私钥不可解析"; exit 1; }
-      SSH="ssh -i $HOME/.ssh/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      SSHOPT="-i $HOME/.ssh/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      SSH="ssh $SSHOPT"
       echo "看板文件:"; ls -1 "$SRC/dashboards" | sed 's/^/  /'
-      # provisioning 变了才需要重启,先记下同步前的样子
-      BEFORE=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/grafana/provisioning/*/*.y*ml 2>/dev/null | md5sum | cut -d' ' -f1")
+      # 重启判据里必须带上 compose.yml:grafana 的挂载点和端口写在那里,而本 job 是 grafana
+      # 唯一的部署入口(它不在 services.txt 里,没有服务仓能触发它)。少了这一条就会出现
+      # "provider.yml 的 options.path 已经改了,机器上的 compose.yml 还是旧挂载点",
+      # grafana 于是在一个空目录里找看板 —— 配上 disableDeletion: false 就是把看板删掉。
+      STATE() { $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/grafana/provisioning/*/*.y*ml $HOST_DIR/compose.yml 2>/dev/null | md5sum | cut -d' ' -f1"; }
+      BEFORE=$(STATE)
       # --delete:从 git 里删掉一个看板,机器上也要消失,否则会留下没人知道的残留
       rsync -rlt --delete -e "$SSH" --itemize-changes "$SRC/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/grafana/"
-      AFTER=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/grafana/provisioning/*/*.y*ml 2>/dev/null | md5sum | cut -d' ' -f1")
+      # 环境描述本身也要送过去,理由同上。服务部署那条路径(templates/deploy.yml)确实会 rsync
+      # 整个目录,但它只重建 services.txt 里列出的服务,grafana 不在其中 —— 两条路都得走。
+      scp $SSHOPT "deploy/$GRAFANA_ENV/compose.yml" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/compose.yml"
+      AFTER=$(STATE)
       if [ "$BEFORE" != "$AFTER" ]; then
-        echo "provisioning 变了,重启 grafana"
+        echo "provisioning 或 compose.yml 变了,重建 grafana"
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose up -d --force-recreate grafana"
       else
-        echo "provisioning 没变,不重启;看板改动 30 秒内自动生效"
+        echo "provisioning 与 compose.yml 都没变,不重启;看板改动 30 秒内自动生效"
       fi
       echo "等 grafana 认到新内容:"
+      OK=""
       for i in $(seq 1 8); do
         sleep 6
         OUT=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "curl -s --max-time 10 'http://localhost:$GRAFANA_PORT/api/search?type=dash-db'" || true)
-        echo "$OUT" | grep -q '"uid"' && break
+        echo "$OUT" | grep -q '"uid"' && { OK=1; break; }
       done
       echo "$OUT" | tr ',' '\n' | grep -E '"(title|uid)"' | sed 's/^/  /'
+      # 一个看板都没有就是出事了,最典型的就是挂载点与 provider 的 options.path 不一致:
+      # 容器里那个目录是空的,disableDeletion: false 于是把库里的看板删掉。必须让 job 红。
+      [ -n "$OK" ] || { echo "grafana 里一个看板都没有 —— 检查挂载点与 provider 的 options.path 是否一致"; exit 1; }
 
 # ---------- 版本集合 ----------
 # 需求里的"前端版本 A + 服务 B 的 B1 + …组成一个稳定版本"。

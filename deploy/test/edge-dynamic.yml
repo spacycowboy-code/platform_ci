@@ -103,6 +103,8 @@ http:
         servers: [{url: "http://product-structure-information:8000"}]   # 测试环境自己的一份
     grafana:
       loadBalancer:
+        # 与 stack.yml 里那条 GRAFANA_UPSTREAM 同一个问题:生产的 grafana 已不对局域网
+        # 发布 9401,这个地址在集群里到不了。本层启用前先给 grafana 一个集群内的落点。
         servers: [{url: "http://100.77.162.66:9401"}]
     seqdiag:
       loadBalancer:
