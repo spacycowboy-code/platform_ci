@@ -53,9 +53,9 @@ services:
       # psi 已经是测试环境自己的一份,按服务名访问
       PSI_UPSTREAM: "http://product-structure-information:8000"
       # grafana 还没有自己的实例,暂时仍指向生产那一份(只读看板)。
-      # 注意:生产的 grafana 已经不对局域网发布 9401(只绑 127.0.0.1 与 docker0 网关),
-      # 所以这个地址在集群里到不了。这个 stack 启用前必须先解决 grafana 的落点 ——
-      # 单机 compose 那份(deploy/test/compose.yml)走的是 host.docker.internal,不受影响。
+      # 这个环境跑在 swarm 上、两个节点各一个副本,所以只能用局域网地址 ——
+      # host.docker.internal 只解析到副本所在那台机器(理由同上面那条注释),
+      # 而生产那份 grafana 只在其中一台上。代价见 deploy/prod/compose.yml 的端口注释。
       GRAFANA_UPSTREAM: "http://100.77.162.66:9401"
       # 这个环境没有 eridoc 实例。变量仍然必须给:前端镜像的 nginx 模板里有一条
       # proxy_pass ${ERIDOC_UPSTREAM}/api/,不给会被 envsubst 渲成空串,整份配置非法,

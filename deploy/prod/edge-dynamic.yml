@@ -64,10 +64,8 @@ http:
         # (compose.yml 里现在是 https://rpai.ews.gic.ericsson.se/grafana/)—— 入口切换时
         # 要同步改那一行。
         #
-        # 这个地址现在到不了:grafana 不再对局域网发布 9401(见 compose.yml,它只绑
-        # 127.0.0.1 与 docker0 网关)。本层启用前必须先给 grafana 一个集群内的落点 ——
-        # 要么把它搬进 stack(两个 stack 现在都没有 grafana 服务),要么在这台机器上
-        # 为集群单独开一条可达地址。照现在这样启用,/grafana/ 会 502。
+        # 这个地址是活的(单机 compose 的 grafana 在这台机器上按局域网地址发布 9401)。
+        # 本层若启用,注意它与 deploy/test/edge-dynamic.yml 指的是同一份 grafana。
         servers: [{url: "http://100.77.162.66:9401"}]
     fe:
       loadBalancer:

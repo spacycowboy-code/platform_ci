@@ -227,17 +227,31 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
     ports:
-      # 不对局域网发布。上面开着匿名 Viewer,而 Skill DB 数据源是 proxy 模式,两者叠加
-      # 等于"任何能到这个端口的人都能不登录对门户库跑 SQL"—— 实测过:匿名 POST
-      # /api/ds/query 带 rawSql 直接返回结果,而那台 MySQL 上还有别的团队的库。
-      # 改这两行之前先读懂它们各自是给谁用的:
-      #   127.0.0.1  本机排障(与 frontend 的 8901 同一个用法)
-      #   172.17.0.1 docker0 网关,也就是 extra_hosts 里 host-gateway 解析到的地址。
-      #              同机其它 compose 项目通过 host.docker.internal:9401 访问本服务,
-      #              验收环境的前端就是这么指过来的(它自己没有 grafana 实例)。
-      #              网关地址变了(docker --host-gateway-ip)这一行要跟着改。
+      # 这个端口现在仍然对局域网开放,而 grafana 开着匿名 Viewer、Skill DB 数据源又是
+      # proxy 模式 —— 任何能到这里的人不登录就能对门户库跑 SQL(实测:匿名 POST
+      # /api/ds/query 带 rawSql 直接返回数据;那台 MySQL 上还有别的团队的库)。
+      # 这是个已知且未关闭的洞,不是设计。
+      #
+      # 2026-08-30 试过只绑 127.0.0.1 + 172.17.0.1(docker0 网关),生产侧一切正常,
+      # 但验收环境的 /grafana/ 立刻 502:那个环境是 swarm,两个节点各一个副本,它的
+      # traefik 直接连 100.77.162.66:9401(见 deploy/test/edge-dynamic.yml),而 traefik
+      # 刻意没有节点约束 —— 落在另一个节点时,网桥网关和回环都到不了。所以已回退。
+      #
+      # 关掉这个洞的前提是先消掉"跨节点访问这台机器的 9401"这个依赖,两条路:
+      #   1. 验收环境有自己的 grafana 实例(在 stack 的 overlay 网络里按服务名访问),
+      #      provisioning 用 configs 下发 —— 那个 stack 已经在用这个机制发 traefik 配置。
+      #      顺带解开另一件事:验收环境有了自己的实例才能做"删掉数据卷验证可重建"的演练。
+      #   2. 只放行两个 swarm 节点的地址(DOCKER-USER 链)。代价是这条状态在仓库里看不见。
+      # 在那之前,至少该给数据源换一个只读、只限门户库的 MySQL 用户,把最坏后果限成"读一个库"。
+      #
+      #   127.0.0.1     本机排障(与 frontend 的 8901 同一个用法)
+      #   172.17.0.1    docker0 网关,即 extra_hosts 里 host-gateway 解析到的地址。
+      #                 同机其它容器走 host.docker.internal:9401 时用这一条。
+      #   100.77.162.66 本机局域网地址。这一条就是上面说的洞,只为验收环境的 swarm 而留。
+      #                 逐个写明而不是写 "9401:3000",是为了不额外监听 IPv6 与其它网卡。
       - "127.0.0.1:9401:3000"
       - "172.17.0.1:9401:3000"
+      - "100.77.162.66:9401:3000"
     volumes:
       - grafana-data:/var/lib/grafana
       # 数据源与仪表盘定义随环境描述一起同步过去,不再从服务器上的源码目录挂。
