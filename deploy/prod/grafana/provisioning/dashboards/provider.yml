@@ -22,10 +22,6 @@ providers:
     # id/version/uid),数据卷里也没有 annotation、告警规则、库面板、播放列表 —— 就是说
     # 此刻整个卷里没有一样不可重建的东西。这个结论会随着有人动手改看板而失效。
     allowUiUpdates: true
-    # 2026-08-30 实测:线上那份 skill-metrics 与本目录里的文件逐字段一致(忽略
-    # id/version/uid),数据卷里也没有 annotation、告警规则、库面板、播放列表 —— 就是说
-    # 此刻整个卷里没有一样不可重建的东西。这个结论会随着有人动手改看板而失效。
-    allowUiUpdates: true
     options:
       # 与 compose.yml 里那条 ./grafana/dashboards 的挂载点必须一致。刻意不放在
       # /var/lib/grafana 下面 —— 那是数据卷,理由写在 compose.yml 的挂载处。
