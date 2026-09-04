@@ -276,6 +276,30 @@ services:
 
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
+  work-connector:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/work-connector:${WORK_CONNECTOR_TAG:-not-deployed}
+    container_name: work-connector
+    restart: unless-stopped
+    environment:
+      # 展示时区。后端用它决定"今天"从几点开始 —— 容器是 UTC,不设的话"今天"会从
+      # 北京时间早上 8 点算起。
+      WC_TZ: "Asia/Shanghai"
+      # 生产界面在门户里,同源,不需要 CORS。留空即关掉。
+      WC_CORS_ORIGINS: ""
+    # **不发布端口,也不 expose。** 与 eridoc-client 是同一个结论但不同的理由:
+    # eridoc-client 通过一个共用服务账号读取,未认证到达就等于发放本人无权看的文档;
+    # 这个服务不持有任何凭据,每个调用自带调用者本人的 Graph token 并严格以那个人的身份
+    # 行事,所以未认证的人拿不到他本来没有的东西 —— 没有可提升的权限。
+    # 真正的理由是:一个可达的端口会让这台机器变成任何人都能用的 graph.microsoft.com 中继。
+    healthcheck:
+      # /api/health 不需要 token,正是为此存在。容器内监听 8000(基础镜像的 APP_PORT)。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
   frontend:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-63acaea6}
     container_name: rp-ai-portal-fe
@@ -293,6 +317,11 @@ services:
       # 走 compose 服务名而不是 host.docker.internal:那个服务不再发布宿主机端口,
       # 只在这个 compose 项目的网络里可达 —— 这正是它的鉴权模式所要求的。
       ERIDOC_UPSTREAM: "http://eridoc-client:8000"
+      # 同理走服务名。**这一项不能缺**:envsubst 对未定义变量替换成空串,配置里就会出现
+      # `proxy_pass /api/;`,nginx 起不来 —— 挂的是整个门户,不是那一个工具。
+      # 而且 nginx 在加载配置时就解析 proxy_pass 里的主机名,所以 work-connector 容器
+      # 必须先于新版 frontend 存在,否则同样起不来。顺序见 work-connector/DEPLOY.md。
+      WC_UPSTREAM: "http://work-connector:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
