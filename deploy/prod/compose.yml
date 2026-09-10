@@ -274,6 +274,101 @@ services:
       # 这个路径与 provisioning/dashboards/provider.yml 的 options.path 必须一致。
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
 
+  # ---- genius-ac:AC 领域助手,引擎 + 判定器 ----
+  # 一个仓构建两个镜像。判定器持有模型访问(kiro-cli 的 SSO 登录态),引擎不持有任何模型凭据,
+  # 只按 LLM_API_BASE 指向判定器 —— 所以判定器的端口就是模型额度本身,不发布到宿主机。
+  genius-ac:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/genius-ac:${GENIUS_AC_TAG:-not-deployed}
+    container_name: genius-ac
+    restart: unless-stopped
+    env_file:
+      - genius-ac.env
+    ports:
+      # 只绑回环。对外入口是单独一个决定(发布端口 / 走门户 nginx 注入 X-User),还没做:
+      # 引擎的 _user() 从 X-User 取调用者身份,那个头只有门户那一层能可信地注入,
+      # 自己发布一个网络端口等于让任何能到达这台机器的人共用一个 token 花模型额度。
+      # 这个口子的用途与 frontend 的 8901 相同:隔离故障、以及排障时的降级入口。
+      - "127.0.0.1:8903:8000"
+    volumes:
+      # 引擎自己也要 KB。它的 _lifespan(main.py:58)在索引为空时跑 index_ac_docs ——
+      # 而索引在容器可写层里,每次换容器都是空的,所以每次部署引擎都要重新读一遍 KB。
+      # 少挂这一份的表现是 Understanding 永远答不出东西,而容器 healthy、日志一行
+      # "doc index skipped"。挂载点同判定器,理由见那边。
+      - type: bind
+        source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
+        target: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      # 索引 / 学习进度 / synthesis 写回的知识条目。全都落在 DATA_DIR
+      # (_paths.py:DATA_DIR = 项目根/.kiro/agents-mine/ac-assistant/data),即容器可写层 ——
+      # 不挂卷的话每次部署都丢:kb_index.sqlite 要重建(可接受),但 learning_progress.sqlite
+      # (每个人的学习进度)和 knowledge_base.json(ac_tickets.upsert_entry 写回的条目,
+      # MAINTAINERS 专门为它设了准入门槛)是真数据。
+      # 命名卷首次创建时会用镜像里的内容播种,所以镜像自带的 knowledge_base.json 不会丢;
+      # 反过来,卷一旦存在,后续镜像里更新的那份**不会**再覆盖它 —— 写回既然落在这里,
+      # 卷里那份就是权威的那份。
+      - genius-ac-data:/app/.kiro/agents-mine/ac-assistant/data
+    healthcheck:
+      # /health 不鉴权,正是为此存在(auth_mode=token 只挡 /api/*)。容器内监听 8000。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  genius-ac-judge:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/genius-ac-judge:${GENIUS_AC_JUDGE_TAG:-not-deployed}
+    container_name: genius-ac-judge
+    restart: unless-stopped
+    # 与引擎同一个 env 文件:JUDGE_TOKEN 必须等于引擎的 LLM_API_KEY,分成两个文件就等于
+    # 给"两边不一致"留了位置,而它的表现是每次 ask 都 401。
+    env_file:
+      - genius-ac.env
+    # 不发布端口。它是一个模型访问入口,能到达就能花额度、跑任意 prompt。
+    # 引擎在同一个 compose 网络里按服务名访问它(genius-ac-judge:8790)。
+    expose:
+      - "8790"
+    healthcheck:
+      # 判定器降级(未登录、模型不可用)在业务上只表现为"所有提问都失败",
+      # 真正的原因在它自己的输出里 —— 所以要有容器层面的可见性。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8790/health').status == 200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      # kiro-cli 的 SSO 登录态。不在任何备份里;丢了就要手动再 kiro-cli login 一次。
+      # 镜像名不能改:卷名与它绑定,改名会挂到一对空卷上,表现为未登录。
+      - genius-ac-kiro-home:/root/.kiro
+      - genius-ac-kiro-share:/root/.local/share/kiro-cli
+      # 知识来源,只读。**容器内的挂载点必须是这两个写死的常量**:
+      #   ac_kb_docs.py:33   DEFAULT_AC_KB_DIR
+      #   ac_learn_code.py:32 DEFAULT_CHECKOUT
+      # DEPLOY.md 教人设的 GENIUS_AC_KB_DIR / GENIUS_AC_CHECKOUT 全仓没有一行代码读,
+      # 挂到别处等于没挂 —— 代码照样去看常量那个路径,找不到就 return,KB 空、检索零命中。
+      # 主机侧的源路径是另一回事:那两个常量在这台机器上都不存在(/proj/terass_func 整个
+      # 不存在,/repo 也不存在,核实过),它们是开发机的位置,所以源按本机约定
+      # (/proj/rp_ait_prod/data/<服务>)放,由人往里同步。
+      #
+      # 用长语法且 create_host_path: false:短语法在源路径不存在时 docker 会**造一个空目录**,
+      # 而 ac_kb_docs.py:109 对不存在/空目录直接 return —— 于是 KB 空、检索零命中,
+      # 容器却 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
+      - type: bind
+        source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
+        target: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /proj/rp_ait_prod/data/genius-ac/antennacalibration
+        target: /repo/enawnfa/rsw/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      # 索引与知识条目。与引擎共用同一个卷:判定器的 ac_learn_code 往 kb_code.sqlite 写,
+      # 引擎的检索从同一个库读 —— 不共用,判定器学到的东西引擎永远看不见。
+      - genius-ac-data:/app/.kiro/agents-mine/ac-assistant/data
+
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
   work-connector:
@@ -390,3 +485,18 @@ volumes:
   grafana-data:
     external: true
     name: ai-portal-be_grafana-data
+  # 判定器的 SSO 登录态。写 external 且名字写死,理由是 app/judge.py 的模块注释点名要求的:
+  # 派生名跟着 compose 项目目录走,换一次目录就挂到一对空卷上,表现为"未登录" —— 而登录态是
+  # 这个服务唯一、且最难恢复的状态(要人手动 kiro-cli login)。名字不带目录前缀,正是为了
+  # 让它不随目录变化。首次部署前在主机上建一次:
+  #   docker volume create genius-ac_kiro-home && docker volume create genius-ac_kiro-share
+  genius-ac-kiro-home:
+    external: true
+    name: genius-ac_kiro-home
+  genius-ac-kiro-share:
+    external: true
+    name: genius-ac_kiro-share
+  # 引擎与判定器共用。同上写死名字:换目录不该让人的学习进度和知识条目消失。
+  genius-ac-data:
+    external: true
+    name: genius-ac_data
