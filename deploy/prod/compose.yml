@@ -289,6 +289,25 @@ services:
       # 自己发布一个网络端口等于让任何能到达这台机器的人共用一个 token 花模型额度。
       # 这个口子的用途与 frontend 的 8901 相同:隔离故障、以及排障时的降级入口。
       - "127.0.0.1:8903:8000"
+    volumes:
+      # 引擎自己也要 KB。它的 _lifespan(main.py:58)在索引为空时跑 index_ac_docs ——
+      # 而索引在容器可写层里,每次换容器都是空的,所以每次部署引擎都要重新读一遍 KB。
+      # 少挂这一份的表现是 Understanding 永远答不出东西,而容器 healthy、日志一行
+      # "doc index skipped"。挂载点同判定器,理由见那边。
+      - type: bind
+        source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
+        target: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      # 索引 / 学习进度 / synthesis 写回的知识条目。全都落在 DATA_DIR
+      # (_paths.py:DATA_DIR = 项目根/.kiro/agents-mine/ac-assistant/data),即容器可写层 ——
+      # 不挂卷的话每次部署都丢:kb_index.sqlite 要重建(可接受),但 learning_progress.sqlite
+      # (每个人的学习进度)和 knowledge_base.json(ac_tickets.upsert_entry 写回的条目,
+      # MAINTAINERS 专门为它设了准入门槛)是真数据。
+      # 命名卷首次创建时会用镜像里的内容播种,所以镜像自带的 knowledge_base.json 不会丢;
+      # 反过来,卷一旦存在,后续镜像里更新的那份**不会**再覆盖它 —— 写回既然落在这里,
+      # 卷里那份就是权威的那份。
+      - genius-ac-data:/app/.kiro/agents-mine/ac-assistant/data
     healthcheck:
       # /health 不鉴权,正是为此存在(auth_mode=token 只挡 /api/*)。容器内监听 8000。
       test: ["CMD", "python", "-c",
@@ -324,25 +343,31 @@ services:
       # 镜像名不能改:卷名与它绑定,改名会挂到一对空卷上,表现为未登录。
       - genius-ac-kiro-home:/root/.kiro
       - genius-ac-kiro-share:/root/.local/share/kiro-cli
-      # 知识来源,只读。**路径不是 DEPLOY.md / ac_kb_docs.py 里那两个。**
-      # 那两个(/proj/terass_func/... 和 /repo/enawnfa/...)是开发机上的位置,这台机器上
-      # 都不存在 —— /proj/terass_func 整个不存在,/repo 也不存在(核实过)。让生产依赖一个
-      # 结构上不会出现在这台机器上的路径本身就是错的,所以按本机既有约定
-      # (/proj/rp_ait_prod/data/<服务>)落在服务自己的数据目录下,由人往里同步。
+      # 知识来源,只读。**容器内的挂载点必须是这两个写死的常量**:
+      #   ac_kb_docs.py:33   DEFAULT_AC_KB_DIR
+      #   ac_learn_code.py:32 DEFAULT_CHECKOUT
+      # DEPLOY.md 教人设的 GENIUS_AC_KB_DIR / GENIUS_AC_CHECKOUT 全仓没有一行代码读,
+      # 挂到别处等于没挂 —— 代码照样去看常量那个路径,找不到就 return,KB 空、检索零命中。
+      # 主机侧的源路径是另一回事:那两个常量在这台机器上都不存在(/proj/terass_func 整个
+      # 不存在,/repo 也不存在,核实过),它们是开发机的位置,所以源按本机约定
+      # (/proj/rp_ait_prod/data/<服务>)放,由人往里同步。
       #
       # 用长语法且 create_host_path: false:短语法在源路径不存在时 docker 会**造一个空目录**,
       # 而 ac_kb_docs.py:109 对不存在/空目录直接 return —— 于是 KB 空、检索零命中,
       # 容器却 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
       - type: bind
         source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
-        target: /kb/antennacalibration
+        target: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
         read_only: true
         bind: {create_host_path: false}
       - type: bind
         source: /proj/rp_ait_prod/data/genius-ac/antennacalibration
-        target: /repo/antennacalibration
+        target: /repo/enawnfa/rsw/antennacalibration
         read_only: true
         bind: {create_host_path: false}
+      # 索引与知识条目。与引擎共用同一个卷:判定器的 ac_learn_code 往 kb_code.sqlite 写,
+      # 引擎的检索从同一个库读 —— 不共用,判定器学到的东西引擎永远看不见。
+      - genius-ac-data:/app/.kiro/agents-mine/ac-assistant/data
 
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
@@ -471,3 +496,7 @@ volumes:
   genius-ac-kiro-share:
     external: true
     name: genius-ac_kiro-share
+  # 引擎与判定器共用。同上写死名字:换目录不该让人的学习进度和知识条目消失。
+  genius-ac-data:
+    external: true
+    name: genius-ac_data
