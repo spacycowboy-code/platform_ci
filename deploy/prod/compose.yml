@@ -325,10 +325,11 @@ services:
       - genius-ac-kiro-home:/root/.kiro
       - genius-ac-kiro-share:/root/.local/share/kiro-cli
       # 知识来源,只读。用长语法且 create_host_path: false ——
-      # 短语法在源路径不存在时 docker 会**造一个空目录**,于是 KB 是空的、检索一条也不命中,
+      # 短语法在源路径不存在时 docker 会**造一个空目录**,而 ac_kb_docs.py:109 对不存在/空目录
+      # 直接 return —— 于是 KB 空、检索零命中,
       # 而容器 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
       - type: bind
-        source: /proj/rp_ait_prod/FILL-ME/kb/antennacalibration
+        source: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
         target: /kb/antennacalibration
         read_only: true
         bind: {create_host_path: false}
