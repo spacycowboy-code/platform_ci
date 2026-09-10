@@ -324,17 +324,22 @@ services:
       # 镜像名不能改:卷名与它绑定,改名会挂到一对空卷上,表现为未登录。
       - genius-ac-kiro-home:/root/.kiro
       - genius-ac-kiro-share:/root/.local/share/kiro-cli
-      # 知识来源,只读。用长语法且 create_host_path: false ——
-      # 短语法在源路径不存在时 docker 会**造一个空目录**,而 ac_kb_docs.py:109 对不存在/空目录
-      # 直接 return —— 于是 KB 空、检索零命中,
-      # 而容器 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
+      # 知识来源,只读。**路径不是 DEPLOY.md / ac_kb_docs.py 里那两个。**
+      # 那两个(/proj/terass_func/... 和 /repo/enawnfa/...)是开发机上的位置,这台机器上
+      # 都不存在 —— /proj/terass_func 整个不存在,/repo 也不存在(核实过)。让生产依赖一个
+      # 结构上不会出现在这台机器上的路径本身就是错的,所以按本机既有约定
+      # (/proj/rp_ait_prod/data/<服务>)落在服务自己的数据目录下,由人往里同步。
+      #
+      # 用长语法且 create_host_path: false:短语法在源路径不存在时 docker 会**造一个空目录**,
+      # 而 ac_kb_docs.py:109 对不存在/空目录直接 return —— 于是 KB 空、检索零命中,
+      # 容器却 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
       - type: bind
-        source: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
+        source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
         target: /kb/antennacalibration
         read_only: true
         bind: {create_host_path: false}
       - type: bind
-        source: /repo/enawnfa/rsw/antennacalibration
+        source: /proj/rp_ait_prod/data/genius-ac/antennacalibration
         target: /repo/antennacalibration
         read_only: true
         bind: {create_host_path: false}
@@ -455,8 +460,14 @@ volumes:
   grafana-data:
     external: true
     name: ai-portal-be_grafana-data
-  # 新建的卷,不写 external:上面那几个写 external 是因为数据先于这份描述存在,
-  # 而这两个还不存在 —— 写 external 只会让容器因"卷不存在"起不来。
-  # 由 compose 按项目目录派生(prod-env_genius-ac-kiro-home)。换目录会挂到空卷上。
+  # 判定器的 SSO 登录态。写 external 且名字写死,理由是 app/judge.py 的模块注释点名要求的:
+  # 派生名跟着 compose 项目目录走,换一次目录就挂到一对空卷上,表现为"未登录" —— 而登录态是
+  # 这个服务唯一、且最难恢复的状态(要人手动 kiro-cli login)。名字不带目录前缀,正是为了
+  # 让它不随目录变化。首次部署前在主机上建一次:
+  #   docker volume create genius-ac_kiro-home && docker volume create genius-ac_kiro-share
   genius-ac-kiro-home:
+    external: true
+    name: genius-ac_kiro-home
   genius-ac-kiro-share:
+    external: true
+    name: genius-ac_kiro-share
