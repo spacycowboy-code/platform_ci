@@ -5,3 +5,4 @@ ai-portal-be.env=AUDIT_PROD_ENV
 grafana.env=GRAFANA_PROD_ENV
 eridoc-client.env=ERIDOC_PROD_ENV
 skill-audit.env=SKILL_AUDIT_PROD_ENV
+genius-ac.env=GENIUS_AC_PROD_ENV

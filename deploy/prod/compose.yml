@@ -274,6 +274,70 @@ services:
       # 这个路径与 provisioning/dashboards/provider.yml 的 options.path 必须一致。
       - ./grafana/dashboards:/etc/grafana/dashboards:ro
 
+  # ---- genius-ac:AC 领域助手,引擎 + 判定器 ----
+  # 一个仓构建两个镜像。判定器持有模型访问(kiro-cli 的 SSO 登录态),引擎不持有任何模型凭据,
+  # 只按 LLM_API_BASE 指向判定器 —— 所以判定器的端口就是模型额度本身,不发布到宿主机。
+  genius-ac:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/genius-ac:${GENIUS_AC_TAG:-not-deployed}
+    container_name: genius-ac
+    restart: unless-stopped
+    env_file:
+      - genius-ac.env
+    ports:
+      # 只绑回环。对外入口是单独一个决定(发布端口 / 走门户 nginx 注入 X-User),还没做:
+      # 引擎的 _user() 从 X-User 取调用者身份,那个头只有门户那一层能可信地注入,
+      # 自己发布一个网络端口等于让任何能到达这台机器的人共用一个 token 花模型额度。
+      # 这个口子的用途与 frontend 的 8901 相同:隔离故障、以及排障时的降级入口。
+      - "127.0.0.1:8903:8000"
+    healthcheck:
+      # /health 不鉴权,正是为此存在(auth_mode=token 只挡 /api/*)。容器内监听 8000。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  genius-ac-judge:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/genius-ac-judge:${GENIUS_AC_JUDGE_TAG:-not-deployed}
+    container_name: genius-ac-judge
+    restart: unless-stopped
+    # 与引擎同一个 env 文件:JUDGE_TOKEN 必须等于引擎的 LLM_API_KEY,分成两个文件就等于
+    # 给"两边不一致"留了位置,而它的表现是每次 ask 都 401。
+    env_file:
+      - genius-ac.env
+    # 不发布端口。它是一个模型访问入口,能到达就能花额度、跑任意 prompt。
+    # 引擎在同一个 compose 网络里按服务名访问它(genius-ac-judge:8790)。
+    expose:
+      - "8790"
+    healthcheck:
+      # 判定器降级(未登录、模型不可用)在业务上只表现为"所有提问都失败",
+      # 真正的原因在它自己的输出里 —— 所以要有容器层面的可见性。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8790/health').status == 200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      # kiro-cli 的 SSO 登录态。不在任何备份里;丢了就要手动再 kiro-cli login 一次。
+      # 镜像名不能改:卷名与它绑定,改名会挂到一对空卷上,表现为未登录。
+      - genius-ac-kiro-home:/root/.kiro
+      - genius-ac-kiro-share:/root/.local/share/kiro-cli
+      # 知识来源,只读。用长语法且 create_host_path: false ——
+      # 短语法在源路径不存在时 docker 会**造一个空目录**,于是 KB 是空的、检索一条也不命中,
+      # 而容器 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
+      - type: bind
+        source: /proj/rp_ait_prod/FILL-ME/kb/antennacalibration
+        target: /kb/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /repo/enawnfa/rsw/antennacalibration
+        target: /repo/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
   work-connector:
@@ -390,3 +454,8 @@ volumes:
   grafana-data:
     external: true
     name: ai-portal-be_grafana-data
+  # 新建的卷,不写 external:上面那几个写 external 是因为数据先于这份描述存在,
+  # 而这两个还不存在 —— 写 external 只会让容器因"卷不存在"起不来。
+  # 由 compose 按项目目录派生(prod-env_genius-ac-kiro-home)。换目录会挂到空卷上。
+  genius-ac-kiro-home:
+  genius-ac-kiro-share:
