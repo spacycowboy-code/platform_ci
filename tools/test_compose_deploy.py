@@ -18,7 +18,8 @@ import tempfile
 
 import yaml
 
-MARKER = "docker compose up -d --force-recreate"
+# 新旧两版都有这句注释,所以反面探针也定位得到。
+MARKER = "以下是 compose(单机)形态"
 
 PREAMBLE = r"""
 set -eu
@@ -30,7 +31,13 @@ ssh() {
   printf '%s\n' "$_s" > "$RENDERED"
   sh -e -c "$_s"
 }
-scp() { : ; }
+# scp 桩:真的复制过去(最后两个参数是 源 与 目标),这样 ssh 桩接着执行的就是
+# 真正被上传的那份 release.sh —— 整条"渲染 -> 上传 -> 执行"都是真的。
+scp() {
+  while [ "$#" -gt 2 ]; do shift; done
+  _src="$1"; _dst="$2"
+  cp "$_src" "${_dst#*:}"
+}
 """
 
 FAKE_DOCKER = r"""#!/bin/sh
@@ -74,6 +81,10 @@ def run(frag, env_text, extra=False, pull_fail=False, up_fail=False, tag="newsha
         envdir.mkdir()
         (envdir / "services.txt").write_text(
             "main-svc: compose svc-a\nextra-svc: compose svc-b\n", encoding="utf-8")
+        # deploy.yml 用相对路径 scp templates/release.sh,所以按 job 的工作目录摆好
+        tdir = pathlib.Path(d) / "templates"
+        tdir.mkdir()
+        shutil.copy("templates/release.sh", tdir / "release.sh")
         binp = pathlib.Path(d) / "bin"
         binp.mkdir()
         (binp / "docker").write_text(FAKE_DOCKER, encoding="utf-8")
@@ -193,6 +204,13 @@ def main():
     check("双镜像失败时两行都还原",
           "MAIN_SVC_TAG=old" in after and "EXTRA_SVC_TAG=oldx" in after, f"实际={after!r}")
     check("双镜像失败时别人那行没被碰", other.strip() in after, f"实际={after!r}")
+
+    # 5b) 守护 PLATFORM.md 那条原则:compose 分支不许再把逻辑内联进 ssh 的字符串
+    inline = [w for w in ("sed -i", "docker compose pull", "docker compose up") if w in frag]
+    check("compose 分支不再内联 .env / docker 逻辑(只上传脚本再执行)",
+          not inline, f"仍然内联着: {inline}")
+    check("compose 分支确实是调用 release.sh apply-compose",
+          "release.sh' apply-compose" in frag or "release.sh apply-compose" in frag)
 
     # 6) release.sh apply-compose(手工重放)——同一套要求
     print("  -- release.sh apply-compose --")

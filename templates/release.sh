@@ -99,6 +99,9 @@ case "$ACTION" in
       echo "${v}=${t}" >> .env
       echo "记下 ${v}=${t}"
     done
+    sort -o .env .env
+    echo "--- 本环境当前各服务的版本(.env) ---"
+    cat .env
     rollback_env() {
       for _kv in $RB_SET; do
         _v="${_kv%%=*}"
@@ -122,7 +125,7 @@ case "$ACTION" in
       echo "重建容器失败,.env 里本次改的那几行已还原" >&2
       exit 1
     fi
-    echo "--- 重放后实际在跑的镜像 ---"
+    echo "--- 实际在跑的镜像 ---"
     for c in $(docker compose ps -q); do
       docker inspect "$c" --format '  {{.Name}} {{.Config.Image}}' 2>/dev/null || true
     done
