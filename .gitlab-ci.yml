@@ -52,8 +52,11 @@ check-templates:
     # 每个环境的 stack.yml 与 versions.txt 必须对得上 —— 漏一行的后果是别人的部署全挂,
     # 所以要在提出改动的这个 MR 上就变红,而不是等到运行时。
     - python3 tools/check_versions_declared.py
-    # swarm-apply.sh 的行为(校验先于落盘、失败回滚、versions.txt 兜底),用假 docker 跑。
+    # swarm-apply.sh 的行为(校验先于落盘、失败逐行回滚、versions.txt 兜底),用假 docker 跑。
     - python3 tools/test_swarm_apply.py
+    # 生产(compose)那条路径同理。它把 deploy.yml 里那段内联 ssh 脚本**原文取出来**渲染再执行,
+    # 所以转义错了这里就会红 —— 那段历史上因为转义坏过两次。
+    - python3 tools/test_compose_deploy.py
 
 # 缓存仓只会长,不会缩:kaniko 的 --cache-ttl(默认 336h)过期后只是不再采用,不会删。
 # 这个任务按**最后一次被命中的时间**清理,理由与取舍见 tools/prune_build_cache.py 的开头。

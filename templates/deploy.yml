@@ -110,9 +110,26 @@ apply:
         set -e
         cd '$HOST_DIR'
         touch .env
-        # 落盘前留一份回滚副本:.env 是"本环境声明的版本",拉取或重建失败时它不该记着一个
-        # 没生效的标签 —— 那会让下一次重建把这个没验证过的版本顺手带上去,而且没有迹象。
-        cp .env .env.rollback
+        # 落盘前把要动的那一两行的原值记在**远端 shell 变量**里,不落成备份文件。两个理由:
+        #  * 上面那条 rsync 是 --delete 且只排除 .env 与 *.env,任何备份文件都会被别人的
+        #    部署顺手删掉,真要回滚时反而找不到;
+        #  * 整份快照还原会把并发的另一次部署刚写成功的标签一起抹掉 —— 这个模板被各服务仓
+        #    include,deploy 跑在各自的流水线里,没有 resource_group 也没有锁,并发是可能的。
+        OLD_MAIN=\$(sed -n 's/^$VAR=//p' .env | tail -1)
+        OLD_EXTRA=''
+        if [ -n '$EXTRA_VAR' ]; then
+          OLD_EXTRA=\$(sed -n 's/^$EXTRA_VAR=//p' .env | tail -1)
+        fi
+        rollback() {
+          sed -i '/^$VAR=/d' .env
+          if [ -n \"\$OLD_MAIN\" ]; then echo '$VAR='\"\$OLD_MAIN\" >> .env; fi
+          if [ -n '$EXTRA_VAR' ]; then
+            sed -i '/^$EXTRA_VAR=/d' .env
+            if [ -n \"\$OLD_EXTRA\" ]; then echo '$EXTRA_VAR='\"\$OLD_EXTRA\" >> .env; fi
+          fi
+          sort -o .env .env
+          echo '.env 里本次改的那几行已还原(没碰别人的行)'
+        }
         # 只改这一个服务的版本,其它服务保持原样。
         sed -i '/^$VAR=/d' .env
         echo '$VAR=$DEPLOY_TAG' >> .env
@@ -124,8 +141,8 @@ apply:
         echo '--- 本环境当前各服务的版本(.env) ---'
         cat .env
         if ! docker compose pull $TARGETS; then
-          mv .env.rollback .env
-          echo '拉取镜像失败,.env 已回滚'
+          rollback
+          echo '拉取镜像失败'
           exit 1
         fi
         # --force-recreate 不是多余的:compose 只在**服务定义**变化时重建容器,而 env_file 的**内容**
@@ -136,11 +153,10 @@ apply:
         # "标签没变、只改了配置"这一种情况上,而那正是我们要修的。
         # swarm 形态没有这个问题:stack deploy 会把 env_file 解析进服务规格,内容一变规格就变。
         if ! docker compose up -d --force-recreate $TARGETS; then
-          mv .env.rollback .env
-          echo '重建容器失败,.env 已回滚'
+          rollback
+          echo '重建容器失败'
           exit 1
         fi
-        rm -f .env.rollback
         echo '--- 本次实际运行的镜像 ---'
         for c in \$(docker compose ps -q $TARGETS); do
           docker inspect \$c --format '{{.Name}} {{.Config.Image}} {{.Image}}'

@@ -121,18 +121,32 @@ def main():
     # 3) versions.txt 写 '-' 表示"版本由 .env 决定",不能当初始版本用
     proc, _, _ = run(a.script, env_text="MINE_TAG=old\n", versions_text="OTHER_TAG=-\n")
     check("versions.txt 里的 '-' 不充当初始版本", proc.returncode != 0)
+    check("'-' 但集群里没有时,提示要说清是两种情况之一",
+          "新" in proc.stdout and "掉" in proc.stdout, f"实际输出={proc.stdout[-300:]!r}")
 
     # 4) 集群里已经在跑的服务,按现状补齐(既有行为,不能被这次改动弄坏)
     proc, after, _ = run(a.script, env_text="MINE_TAG=old\n", running="reg/other:live9")
     check("集群现状可以补齐缺失的声明", proc.returncode == 0, proc.stdout[-300:])
     check("补齐用的是集群里的值", "OTHER_TAG=live9" in after, f"实际={after!r}")
 
-    # 5) 部署本身失败 -> .env 回滚到部署前
-    proc, after, deployed = run(a.script, env_text="MINE_TAG=old\n" + base,
+    # 5) 部署本身失败 -> 只还原本次改的那几行
+    # UNRELATED_TAG 模拟"同一时刻另一个人刚部署成功写下的行":并发是可能的(这个模板被各服务仓
+    # include,deploy 跑在各自流水线里,没有 resource_group 也没有锁),所以回滚绝不能整份还原。
+    keep = "UNRELATED_TAG=keepme\n"
+    proc, after, deployed = run(a.script, env_text="MINE_TAG=old\n" + base + keep,
                                 deploy_fail=True)
     check("部署失败时非零退出", proc.returncode != 0)
-    check("部署失败后 .env 回滚(本次修的 bug)",
-          after == "MINE_TAG=old\n" + base, f"实际={after!r}")
+    check("部署失败后本次改的那行还原(本次修的 bug)", "MINE_TAG=old" in after, f"实际={after!r}")
+    check("部署失败后没留下没生效的标签", "newsha" not in after, f"实际={after!r}")
+    check("部署失败后别人的行没被碰", "UNRELATED_TAG=keepme" in after, f"实际={after!r}")
+
+    # 5b) 本次是从 versions.txt 补的初始版本、原本没有这一行 -> 回滚要把它删掉
+    proc, after, _ = run(a.script, env_text="MINE_TAG=old\n" + keep,
+                         versions_text="OTHER_TAG=seed1\n", deploy_fail=True)
+    check("回滚删掉原本不存在的那一行", "OTHER_TAG" not in after, f"实际={after!r}")
+    check("回滚后别人的行仍在", "UNRELATED_TAG=keepme" in after, f"实际={after!r}")
+    check("采用过初始版本时,失败信息要点出来",
+          "versions.txt" in proc.stdout, f"实际输出={proc.stdout[-300:]!r}")
 
     # 6) 一切正常
     proc, after, deployed = run(a.script, env_text="MINE_TAG=old\n" + base)

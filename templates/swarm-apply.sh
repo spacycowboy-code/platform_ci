@@ -61,6 +61,7 @@ resolved() {
 # 它**不会**重演"有兜底值时漏声明的服务被静默拉回 git 里那个数字"这个老问题 —— 因为它排在
 # .env 与集群现状之后,永远盖不住运行态;已经在跑的服务在 versions.txt 里写 '-' 即可。
 missing=""
+parked=""
 adopted=""
 for v in $(grep -oE '\$\{[A-Z_]+_TAG' stack.yml | sed 's/.*{//' | sort -u); do
   if resolved "$v"; then
@@ -72,9 +73,15 @@ for v in $(grep -oE '\$\{[A-Z_]+_TAG' stack.yml | sed 's/.*{//' | sort -u); do
   if [ -n "$cur" ]; then
     echo "注意:${v} 原先没有声明,已按集群现状补为 ${cur}"
   elif [ -f versions.txt ]; then
-    cur=$(sed -n "s/^${v}=//p" versions.txt | tail -1)
-    [ "$cur" = "-" ] && cur=""
-    [ -n "$cur" ] && echo "注意:${v} 取 versions.txt 里声明的初始版本 ${cur}"
+    # 顺手去掉空白与 CR:这个文件是人手编辑的,而 CRLF 在这套部署里已经坑过一次
+    # (deploy.yml 投放私钥前要先 tr -d '\r' 就是因为这个)。
+    cur=$(sed -n "s/^${v}=//p" versions.txt | tail -1 | tr -d ' \t\r')
+    if [ "$cur" = "-" ]; then
+      cur=""
+      parked="${parked} ${v}"
+    elif [ -n "$cur" ]; then
+      echo "注意:${v} 取 versions.txt 里声明的初始版本 ${cur}"
+    fi
   fi
   if [ -n "$cur" ]; then
     adopted="${adopted} ${v}=${cur}"
@@ -84,14 +91,43 @@ for v in $(grep -oE '\$\{[A-Z_]+_TAG' stack.yml | sed 's/.*{//' | sort -u); do
 done
 if [ -n "$missing" ]; then
   echo "以下版本变量在 stack.yml 里被引用,但本次入参、机器 .env、集群现状、versions.txt 都没有值:${missing}"
-  echo "把它们的初始版本写进本环境的 versions.txt(和新增服务块放同一个 MR),或先分别部署一次。"
+  for v in $parked; do
+    echo "  ${v} 在 versions.txt 里写的是 '-'(意思是「已经在本环境跑着,版本由 .env 决定」),"
+    echo "  但集群里查不到这个服务。二者只能有一个是真的:"
+    echo "    * 它其实是**新**服务 -> 把 '-' 换成真实的初始标签"
+    echo "    * 它本该在跑却掉了   -> 先查集群,不要改这个文件"
+  done
+  others=""
+  for v in $missing; do
+    case " $parked " in
+      *" $v "*) ;;
+      *) others="${others} ${v}" ;;
+    esac
+  done
+  if [ -n "$others" ]; then
+    echo "其余的(${others}):把初始版本写进 versions.txt(和新增服务块放同一个 MR),或先单独部署一次。"
+  fi
   exit 1
 fi
 
-# ---------- 2b. 校验通过了,现在才落盘;同时留一份回滚用的副本 ----------
-cp .env .env.rollback
+# ---------- 2b. 校验通过了,现在才落盘 ----------
+# 回滚是**逐行**的,不是整份文件的快照。两个理由,都实际成立:
+#  * 这个模板被各个服务仓 include,deploy 任务跑在**各自**的流水线里,没有 resource_group、
+#    没有锁,所以同一台 manager 上完全可能有别人的部署正在写同一个 .env。整份还原会把对方
+#    刚写成功的标签一起抹掉 —— 那比原来那个 bug 更坏。
+#  * 快照要落成文件,而上面第 67 行的 rsync 是 --delete 且只排除 .env 与 *.env,别人的部署
+#    一跑就会把这个快照文件删掉,回滚时反而 mv 不到东西。
+# 所以只在内存里记下本次要动的那几行的原值,失败时只还原它们。
+ROLLBACK_SET=""   # 原来有值的,记成 变量=原值
+ROLLBACK_DEL=""   # 原来根本没有这一行的,失败时删掉
 for kv in $PENDING $adopted; do
   v="${kv%%=*}"; t="${kv#*=}"
+  old=$(sed -n "s/^${v}=//p" .env | tail -1)
+  if [ -n "$old" ]; then
+    ROLLBACK_SET="${ROLLBACK_SET} ${v}=${old}"
+  else
+    ROLLBACK_DEL="${ROLLBACK_DEL} ${v}"
+  fi
   sed -i "/^${v}=/d" .env
   echo "${v}=${t}" >> .env
   echo "记下 ${v}=${t}"
@@ -99,6 +135,19 @@ done
 sort -o .env .env
 echo "--- 本环境声明的版本 ---"
 cat .env
+
+# 循环变量一律用下划线开头:POSIX sh 的函数没有局部作用域。
+rollback_env() {
+  for _kv in $ROLLBACK_SET; do
+    _v="${_kv%%=*}"
+    sed -i "/^${_v}=/d" .env
+    echo "$_kv" >> .env
+  done
+  for _v in $ROLLBACK_DEL; do
+    sed -i "/^${_v}=/d" .env
+  done
+  sort -o .env .env
+}
 
 # ---------- 3. config 对象名 = 内容哈希 ----------
 # 内容一变名字就变,所以不需要人去记得改版本号(手工版本号时代改了文件忘改名字,
@@ -121,11 +170,15 @@ set +a
 # 部署失败要把 .env 回滚:否则文件记着一个没生效的版本,重试会"莫名"通过,而且下一次别人部署
 # 时整栈渲染会把它顺手带上去。
 if ! docker stack deploy -c stack.yml --with-registry-auth --prune --detach=false "$ENV_NAME"; then
-  mv .env.rollback .env
-  echo "部署失败,.env 已回滚到部署前的内容(所以这次的标签没有留下痕迹)"
+  rollback_env
+  echo "部署失败,.env 里本次改的那几行已还原(没碰别人的行)"
+  if [ -n "$adopted" ]; then
+    echo "注意:本次曾按集群现状或 versions.txt 补齐过${adopted}。"
+    echo "如果失败原因是拉不到镜像,先确认这些标签真的发布过 —— versions.txt 里的初始版本"
+    echo "是人手写的,没人替你验证过它在仓库里存在。"
+  fi
   exit 1
 fi
-rm -f .env.rollback
 
 # ---------- 5. 清理不再被引用的 config ----------
 # --prune 不管 config 对象,内容哈希命名下它们会累积。
