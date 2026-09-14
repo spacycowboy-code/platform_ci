@@ -79,7 +79,24 @@ services:
       start_period: 15s
     # 没有 env_file:该服务的 PROD_ENV 与服务器上的 .env 都是空的,生产从来没给它配过
     # 环境变量(代码里读的 RTEP_SMTP_* 目前全未设置)。这是既有状态,迁移不改它。
-
+  po-reporting-portal:
+      image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/po-reporting-portal:${PO_REPORTING_PORTAL_TAG:-not-deployed}
+      container_name: po-reporting-portal
+      restart: unless-stopped
+      ports:
+        - "9020:8000"
+      volumes:
+        - /proj/rp_ait_prod/logs/po-reporting-portal:/app/logs
+      healthcheck:
+        test: ["CMD", "python", "-c",
+               "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status
+  == 200 else 1)"]
+        interval: 30s
+        timeout: 5s
+        retries: 3
+        start_period: 15s
+      # 报表数据已打包进镜像(/app/PO_Reporting_Data),不挂载宿主机数据目录。
+  
   # agent-artifex 属于本环境但当前不运行(容器自 2026-08-05 起是 Exited)。
   # profiles 让 docker compose up 跳过它;删掉 profiles 两行即启动。
   audit-backend:
