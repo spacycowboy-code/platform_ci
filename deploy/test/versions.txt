@@ -1,0 +1,29 @@
+# 本环境每个版本变量的**初始版本**。一行一个 <变量名>=<标签>。
+#
+# 这个文件解决的是一件具体的事:一个服务被写进 stack.yml 但还没被部署过一次时,
+# swarm 的 `stack deploy` 要整栈重渲染、渲染不出那个服务的镜像标签,于是**所有人**的部署
+# 都在动手之前退出。以前的解法是"请先分别部署它们各一次",代价是加服务块到第一次部署之间
+# 有一个谁都不能部署的窗口 —— fi-analysis 就这么卡过一次。
+#
+# 现在:新增服务块的那个 MR 同时在这里写一行初始版本,连坐就不存在了。
+# CI 的 check-templates 会检查 stack.yml 与本文件是否对得上,所以漏写会在你自己的 MR 上
+# 变红,而不是在别人的部署里炸。
+#
+# 优先级(见 templates/swarm-apply.sh 第 2 节):
+#   本次入参 > 机器上的 .env > 集群现状 > 本文件
+# 本文件排在最后,所以它**永远不会**盖住正在运行的版本 —— 不会重演"有兜底值时漏声明的服务
+# 被静默拉回 git 里那个数字"这个老问题。也正因为如此,已经在跑的服务这里写 `-` 就够了:
+# 它们的版本由本机 .env 决定,本文件对它们无效。
+#
+# `-` = 这个服务在本环境已经部署过,版本由机器上的 .env 决定,本文件不参与。
+# 真实标签 = 这个服务还没在本环境跑过,第一次渲染用这个版本。
+
+FI_ANALYSIS_JUDGE_TAG=-
+FI_ANALYSIS_TAG=-
+PRODUCT_STRUCTURE_INFORMATION_TAG=-
+RP_AI_PORTAL_BE_TAG=-
+RP_AI_PORTAL_FE_TAG=-
+SEQUENCE_DIAGRAM_JUDGE_TAG=-
+SEQUENCE_DIAGRAM_TAG=-
+SKILL_AUDIT_JUDGE_TAG=-
+SKILL_AUDIT_TAG=-

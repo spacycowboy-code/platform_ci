@@ -18,8 +18,12 @@ cd "$(dirname "$0")"
 # 目录权限自己兜住:同环境的密钥就在这里,不能让同机其它用户读到
 chmod 750 . 2>/dev/null || true
 
-# ---------- 1. 记下本次要部署的版本 ----------
-touch .env
+# ---------- 1. 解析本次要部署的版本(**先不落盘**) ----------
+# 顺序是这个脚本最容易出错的地方,所以写明:解析 -> 校验 -> 落盘 -> 部署 -> 失败回滚。
+# 以前是先把 V=TAG 写进 .env 再校验,于是校验失败退出时 .env 已经记下新标签而集群还是旧版本,
+# 两件坏事:(a) 重试一次就"莫名"通过了 —— 通过的原因是上一次失败留下的残留,不是问题解决了;
+# (b) 那个没验证过的标签会在下一次**任何人**部署时被整栈渲染顺手带上去,而没人会注意到。
+PENDING=""
 for kv in "$@"; do
   case "$kv" in
     *=*) ;;
@@ -27,37 +31,71 @@ for kv in "$@"; do
   esac
   v="${kv%%=*}"; t="${kv#*=}"
   [ -n "$v" ] && [ -n "$t" ] || { echo "参数 '$kv' 的变量名或标签为空"; exit 1; }
-  sed -i "/^${v}=/d" .env
-  echo "${v}=${t}" >> .env
-  echo "记下 ${v}=${t}"
+  PENDING="${PENDING} ${v}=${t}"
 done
+touch .env
+
+# 某个版本变量本次是否已经有值:先看本次入参,再看机器上的 .env。
+# 循环变量用 _kv 而不是 kv:POSIX sh 的函数没有局部作用域,重名会把调用方的 for 变量改掉。
+resolved() {
+  for _kv in $PENDING; do
+    [ "${_kv%%=*}" = "$1" ] && return 0
+  done
+  grep -q "^${1}=" .env
+}
 
 # ---------- 2. 版本必须声明完整 ----------
 # stack.yml 里的版本变量写成朴素 ${X_TAG}(不带 :? 提示 —— docker 对 :? 里的文字解析不可靠,
-# 曾把提示文字渲染进 config 名字)。所以"必填"由这里保证:缺声明就在动任何东西之前退出。stack deploy 会重新渲染整个栈,所以任何
-# 没声明版本的服务都会让部署失败 —— 这是有意的:以前有兜底值时,漏声明的服务会被静默拉回
-# git 里那个数字。这里在动任何东西之前把缺失的点名报出来。
+# 曾把提示文字渲染进 config 名字)。所以"必填"由这里保证:缺声明就在动任何东西之前退出。
+# stack deploy 会重新渲染整个栈,所以任何没声明版本的服务都会让部署失败。
+#
+# 四个来源,优先级从高到低:
+#   1) 本次入参          —— 这次要部署的就是它
+#   2) 机器上的 .env     —— 本环境当前声明的版本,权威
+#   3) 集群现状          —— 第一次纳入本环境但已经在跑,按现状补齐
+#   4) versions.txt      —— 本环境committed 的**初始版本**(最低优先级)
+#
+# 第 4 条是后加的,专治"一个服务没部署过就卡住所有人":以前只有 1-3,于是谁把一个新服务块写进
+# stack.yml,从那一刻起所有人的部署都渲染不出来,直到那个服务被单独部署一次。现在初始版本在
+# 同一个 MR 里声明,连坐消失。
+# 它**不会**重演"有兜底值时漏声明的服务被静默拉回 git 里那个数字"这个老问题 —— 因为它排在
+# .env 与集群现状之后,永远盖不住运行态;已经在跑的服务在 versions.txt 里写 '-' 即可。
 missing=""
+adopted=""
 for v in $(grep -oE '\$\{[A-Z_]+_TAG' stack.yml | sed 's/.*{//' | sort -u); do
-  if grep -q "^${v}=" .env; then
+  if resolved "$v"; then
     continue
   fi
-  # 某个服务第一次纳入本环境时还没有声明过版本。如果它已经在集群里跑着,按现状补齐一次
-  # 并记一行日志;之后 .env 就是权威。
   img=$(echo "$v" | sed 's/_TAG$//' | tr 'A-Z_' 'a-z-')
   cur=$(docker stack services "$ENV_NAME" --format '{{.Image}}' 2>/dev/null \
         | grep "/${img}:" | head -1 | sed 's/.*://; s/@.*//')
   if [ -n "$cur" ]; then
-    echo "${v}=${cur}" >> .env
     echo "注意:${v} 原先没有声明,已按集群现状补为 ${cur}"
+  elif [ -f versions.txt ]; then
+    cur=$(sed -n "s/^${v}=//p" versions.txt | tail -1)
+    [ "$cur" = "-" ] && cur=""
+    [ -n "$cur" ] && echo "注意:${v} 取 versions.txt 里声明的初始版本 ${cur}"
+  fi
+  if [ -n "$cur" ]; then
+    adopted="${adopted} ${v}=${cur}"
   else
     missing="${missing} ${v}"
   fi
 done
 if [ -n "$missing" ]; then
-  echo "以下服务在本环境没有声明版本、集群里也没有在跑,请先分别部署它们各一次:${missing}"
+  echo "以下版本变量在 stack.yml 里被引用,但本次入参、机器 .env、集群现状、versions.txt 都没有值:${missing}"
+  echo "把它们的初始版本写进本环境的 versions.txt(和新增服务块放同一个 MR),或先分别部署一次。"
   exit 1
 fi
+
+# ---------- 2b. 校验通过了,现在才落盘;同时留一份回滚用的副本 ----------
+cp .env .env.rollback
+for kv in $PENDING $adopted; do
+  v="${kv%%=*}"; t="${kv#*=}"
+  sed -i "/^${v}=/d" .env
+  echo "${v}=${t}" >> .env
+  echo "记下 ${v}=${t}"
+done
 sort -o .env .env
 echo "--- 本环境声明的版本 ---"
 cat .env
@@ -79,7 +117,15 @@ set +a
 # ---------- 4. 部署 ----------
 # --with-registry-auth 必需:少了它,本地没缓存该镜像的节点会一直 Rejected: No such image
 # --prune:stack.yml 是期望状态,文件里删掉的服务就该下线
-docker stack deploy -c stack.yml --with-registry-auth --prune --detach=false "$ENV_NAME"
+#
+# 部署失败要把 .env 回滚:否则文件记着一个没生效的版本,重试会"莫名"通过,而且下一次别人部署
+# 时整栈渲染会把它顺手带上去。
+if ! docker stack deploy -c stack.yml --with-registry-auth --prune --detach=false "$ENV_NAME"; then
+  mv .env.rollback .env
+  echo "部署失败,.env 已回滚到部署前的内容(所以这次的标签没有留下痕迹)"
+  exit 1
+fi
+rm -f .env.rollback
 
 # ---------- 5. 清理不再被引用的 config ----------
 # --prune 不管 config 对象,内容哈希命名下它们会累积。

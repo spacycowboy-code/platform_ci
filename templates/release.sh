@@ -83,18 +83,34 @@ case "$ACTION" in
     [ "${1:-}" = "--" ] && shift
     [ "$#" -ge 1 ] || { echo "至少要传一个 变量名=标签" >&2; exit 1; }
     touch .env
+    # 先校验全部入参再落盘,并留一份回滚副本:.env 是"本环境声明的版本",拉取或重建失败时
+    # 它不该记着一个没生效的标签 —— 那会让 capture 的对比报告说谎,也会在下一次重建时被
+    # 顺手带上去。
     for kv in "$@"; do
       case "$kv" in *=*) ;; *) echo "参数 '$kv' 不是 变量名=标签 的形式" >&2; exit 1 ;; esac
       v="${kv%%=*}"; t="${kv#*=}"
       [ -n "$v" ] && [ -n "$t" ] || { echo "参数 '$kv' 有空值" >&2; exit 1; }
+    done
+    cp .env .env.rollback
+    for kv in "$@"; do
+      v="${kv%%=*}"; t="${kv#*=}"
       sed -i "/^${v}=/d" .env
       echo "${v}=${t}" >> .env
       echo "记下 ${v}=${t}"
     done
     # shellcheck disable=SC2086
-    docker compose pull $TARGETS
+    if ! docker compose pull $TARGETS; then
+      mv .env.rollback .env
+      echo "拉取镜像失败,.env 已回滚" >&2
+      exit 1
+    fi
     # shellcheck disable=SC2086
-    docker compose up -d $TARGETS
+    if ! docker compose up -d $TARGETS; then
+      mv .env.rollback .env
+      echo "重建容器失败,.env 已回滚" >&2
+      exit 1
+    fi
+    rm -f .env.rollback
     echo "--- 重放后实际在跑的镜像 ---"
     for c in $(docker compose ps -q); do
       docker inspect "$c" --format '  {{.Name}} {{.Config.Image}}' 2>/dev/null || true
