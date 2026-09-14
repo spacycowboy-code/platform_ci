@@ -106,31 +106,15 @@ apply:
       echo "本次只重建: $TARGETS"
       EXTRA_VAR=""
       [ -n "$DEPLOY_EXTRA_SERVICE" ] && EXTRA_VAR="$(echo "$DEPLOY_EXTRA_SERVICE" | tr 'a-z-' 'A-Z_')_TAG"
-      ssh $SSHBASE "$TARGET_USER@$TARGET_HOST" "
-        set -e
-        cd '$HOST_DIR'
-        touch .env
-        # 只改这一个服务的版本,其它服务保持原样。
-        sed -i '/^$VAR=/d' .env
-        echo '$VAR=$DEPLOY_TAG' >> .env
-        if [ -n '$EXTRA_VAR' ]; then
-          sed -i '/^$EXTRA_VAR=/d' .env
-          echo '$EXTRA_VAR=$DEPLOY_TAG' >> .env
-        fi
-        sort -o .env .env
-        echo '--- 本环境当前各服务的版本(.env) ---'
-        cat .env
-        docker compose pull $TARGETS
-        # --force-recreate 不是多余的:compose 只在**服务定义**变化时重建容器,而 env_file 的**内容**
-        # 变化不算定义变化。实测过后果:轮换 SKILL_AUDIT_PROD_ENV 之后部署显示成功、文件也确实更新了,
-        # 但容器还是十七分钟前那个,里面仍是旧环境。也就是说在生产轮换数据库口令或任何密钥,部署会
-        # 报成功而实际没生效 —— 这种失败没有任何迹象。
-        # 代价:即使什么都没变也会重建一次(几秒)。换镜像标签本来就要重建,所以多出的代价只落在
-        # "标签没变、只改了配置"这一种情况上,而那正是我们要修的。
-        # swarm 形态没有这个问题:stack deploy 会把 env_file 解析进服务规格,内容一变规格就变。
-        docker compose up -d --force-recreate $TARGETS
-        echo '--- 本次实际运行的镜像 ---'
-        for c in \$(docker compose ps -q $TARGETS); do
-          docker inspect \$c --format '{{.Name}} {{.Config.Image}} {{.Image}}'
-        done
-      "
+      PAIRS="$VAR=$DEPLOY_TAG"
+      [ -n "$EXTRA_VAR" ] && PAIRS="$PAIRS $EXTRA_VAR=$DEPLOY_TAG"
+      # 和 swarm 那条路一样:上传脚本、带参数执行,不把逻辑写进 ssh 的双引号里
+      # (理由见 PLATFORM.md「部署逻辑不写在 ssh 的字符串里」—— 同一天为此坏过三次)。
+      #
+      # 复用 release.sh 的 apply-compose 而不是再写一份:它做的就是同一件事(写版本、拉镜像、
+      # 重建)。以前这段内联在这里、那段在 release.sh 里,两份各自演化,结果 release.sh 那份
+      # 一直漏着 --force-recreate —— 也就是手工重放会报成功而容器没换。重复本身就是那个 bug
+      # 的成因,所以合成一份。
+      scp $SSHBASE templates/release.sh "$TARGET_USER@$TARGET_HOST:$HOST_DIR/release.sh"
+      ssh $SSHBASE "$TARGET_USER@$TARGET_HOST" \
+        "chmod +x '$HOST_DIR/release.sh' && '$HOST_DIR/release.sh' apply-compose '$DEPLOY_ENV' $TARGETS -- $PAIRS"

@@ -83,19 +83,49 @@ case "$ACTION" in
     [ "${1:-}" = "--" ] && shift
     [ "$#" -ge 1 ] || { echo "至少要传一个 变量名=标签" >&2; exit 1; }
     touch .env
+    # 先把全部入参校验完再落盘。回滚逐行做而不是整份还原:同一台机器上可能有 CI 的部署正在
+    # 写同一个 .env(两边都没有锁),整份还原会把对方刚写成功的标签一起抹掉。
     for kv in "$@"; do
       case "$kv" in *=*) ;; *) echo "参数 '$kv' 不是 变量名=标签 的形式" >&2; exit 1 ;; esac
       v="${kv%%=*}"; t="${kv#*=}"
       [ -n "$v" ] && [ -n "$t" ] || { echo "参数 '$kv' 有空值" >&2; exit 1; }
+    done
+    RB_SET=""; RB_DEL=""
+    for kv in "$@"; do
+      v="${kv%%=*}"; t="${kv#*=}"
+      old=$(sed -n "s/^${v}=//p" .env | tail -1)
+      if [ -n "$old" ]; then RB_SET="${RB_SET} ${v}=${old}"; else RB_DEL="${RB_DEL} ${v}"; fi
       sed -i "/^${v}=/d" .env
       echo "${v}=${t}" >> .env
       echo "记下 ${v}=${t}"
     done
+    sort -o .env .env
+    echo "--- 本环境当前各服务的版本(.env) ---"
+    cat .env
+    rollback_env() {
+      for _kv in $RB_SET; do
+        _v="${_kv%%=*}"
+        sed -i "/^${_v}=/d" .env
+        echo "$_kv" >> .env
+      done
+      for _v in $RB_DEL; do sed -i "/^${_v}=/d" .env; done
+    }
     # shellcheck disable=SC2086
-    docker compose pull $TARGETS
+    if ! docker compose pull $TARGETS; then
+      rollback_env
+      echo "拉取镜像失败,.env 里本次改的那几行已还原" >&2
+      exit 1
+    fi
+    # --force-recreate 的理由见 templates/deploy.yml 里那段长注释:compose 只在**服务定义**
+    # 变化时重建容器,env_file 的**内容**变化不算定义变化。少了这个标志,重放会报成功而容器
+    # 还是旧的 —— 生产上轮换密钥时已经这么坑过一次。重放工具尤其不能有这种无迹象的失败。
     # shellcheck disable=SC2086
-    docker compose up -d $TARGETS
-    echo "--- 重放后实际在跑的镜像 ---"
+    if ! docker compose up -d --force-recreate $TARGETS; then
+      rollback_env
+      echo "重建容器失败,.env 里本次改的那几行已还原" >&2
+      exit 1
+    fi
+    echo "--- 实际在跑的镜像 ---"
     for c in $(docker compose ps -q); do
       docker inspect "$c" --format '  {{.Name}} {{.Config.Image}}' 2>/dev/null || true
     done

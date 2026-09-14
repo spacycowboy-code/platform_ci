@@ -1,0 +1,11 @@
+# 本环境每个版本变量的初始版本。格式与理由见 deploy/test/versions.txt。
+#
+# 生产目前全部服务都跑在单机 compose 上(services.txt 里模式全是 compose),而
+# templates/swarm-apply.sh 那套完整性检查只对 swarm 形态生效,所以本文件在生产当前形态下
+# 不参与任何部署决策。留着它是为了两件事:deploy/prod/stack.yml 仍然引用着下面这个变量,
+# CI 的 check-templates 要求 stack.yml 与本文件对得上;以及哪天真把某个服务迁到集群,
+# 这一行就是它的落点。
+#
+# `-` = 这个服务的版本由机器上的 .env 决定,本文件不参与。
+
+PRODUCT_STRUCTURE_INFORMATION_TAG=-
