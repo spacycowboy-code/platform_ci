@@ -47,7 +47,7 @@ MR 里需要说明的就是这几项:服务名(也是镜像名)、要上哪些�
 
 | 步 | 在哪发生 | 做什么 |
 |---|---|---|
-| 1 | 服务仓,自动 | `lint` / `test` / `build`。**`build` 只验证能不能构建,不推镜像** |
+| 1 | 服务仓,自动 | Python 仓 `lint` / `test`,前端仓 `test-web`,之后都跑 `build`。**`build` 只验证能不能构建,不推镜像** |
 | 2 | 服务仓,手动点按钮 | `deploy-prod`(仅 `main`)或 `deploy-test`(任意分支) |
 | 3 | **GitLab runner 的容器里** | 用 kaniko 构建镜像并推到 Artifactory:`armdocker.rnd.ericsson.se/proj-rp-ps-ai/<服务>:<commit sha>` |
 | 4 | platform-ci 的下游流水线(点按钮后自动出现) | ssh 到部署机:同步该环境的 compose 与配置、投放密钥、把这个服务的版本写进部署机的 `.env` |
@@ -81,6 +81,10 @@ include:
 ```
 
 前端仓多两项:`kind: web`、`context`(前端工程子目录)、`dist_dir`(构建产物目录)。
+
+`kind` 决定跑哪个测试作业:`python` 走 `lint` + `test`(ruff + pytest),`web` 走 `test-web`
+(`npm ci` + `npm run test:ci`,容器里装 chromium 给 karma 用)。两边都是"没有测试不算失败,
+但会在日志里说出来";前端仓没有 `test:ci` 脚本时跳过。
 可选输入五个:`apt_packages`、`extra_pip`、`ruff_select`、`extra_dockerfile`、`extra_service`。
 
 ## 三条约定
@@ -114,6 +118,8 @@ include:
 | `build` 说"已存在,跳过构建" | 这个 commit 已有镜像。正常 |
 | `test` 报 `ModuleNotFoundError` | 测试以 `包.tests.模块` 引用自己;模板已设 `PYTHONPATH`,仍失败查本仓 pytest 配置 |
 | `test` 报缺 `httpx` 之类 | 测试依赖没声明,写进 `requirements-dev.txt` |
+| `test-web` 报 `Cannot start ChromeHeadless` | karma 要浏览器在容器里,作业已 `apk add chromium` 并探测路径;若报库缺失,查本仓 `karma.conf.js` 有没有用 `--no-sandbox` |
+| `test-web` 在 `npm ci` 挂掉 | 私有 registry 的包(`@eds`)装不上,查组 CI 变量 `NPM_AUTH_B64` 是否存在且未过期 |
 | 点了按钮但没部署 | 看下游流水线(bridge)的日志,失败通常在 ssh 或密钥变量 |
 | 容器 unhealthy 但服务能访问 | 健康检查打了 `localhost`,会走 `::1`,而 nginx 只监听 IPv4;要写 `127.0.0.1` |
 | 审计判定器变成"未登录",上传全转人工复核 | 登录态在命名卷里,卷名随 compose 项目目录变化;环境描述里的卷必须 `external` 且写死卷名 |
