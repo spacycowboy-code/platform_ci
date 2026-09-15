@@ -24,7 +24,7 @@
 
 | 路径 | 作用 |
 |---|---|
-| `templates/service.yml` | 服务仓唯一 include 的文件:lint / test / build + 两个部署按钮 |
+| `templates/service.yml` | 服务仓唯一 include 的文件:lint / test / test-web / build + 两个部署按钮 |
 | `templates/deploy.yml` | 被按钮触发时执行部署的 `apply` 任务(本仓内部用) |
 | `docker/Dockerfile.base` | 所有 Python 服务的基础镜像配方 |
 | `templates/swarm-apply.sh` | 在 manager 上执行一次集群部署;**部署逻辑不写在 ssh 的字符串里** |
@@ -387,6 +387,10 @@ swarm 的 config 不可变,所以改配置要换名字。**不要用手工版本
 这对 `RP-AI` 组不构成问题:`581469` 六周内 113 条作业,排队中位 **2.1s**,超过 60s 的只有 1 条
 (最大 275s)。单槽位之所以对我们是瓶颈,是因为我们一条流水线有 lint/test/build 三个并行作业去抢
 同一个槽,而他们的作业量小、很少撞上。所以老机器那份配置不必为他们改。
+
+补一句口径:前端仓(`kind: web`)以前一条流水线只有 `build` 一个作业 —— `lint` 与 `test` 都被
+`$KIND == "python"` 挡掉了。加上 `test-web` 之后是两个,所以上面那笔账对前端仓从"一个"变成
+"两个",仍远低于 Python 仓的三个。
 
 ### 为什么不做"优先新机器、老机器兜底"
 

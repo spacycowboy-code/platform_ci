@@ -106,6 +106,58 @@ test:
       if [ "$ec" -eq 5 ]; then echo "该仓还没有测试"; ec=0; fi
       exit "$ec"
 
+# 前端的单元测试。
+#
+# **为什么是单独一个 job 而不是把上面 `test` 的 rules 放宽到 web。** 上面那个跑在
+# `$BASE_IMAGE`(python-base)上、用 pip 装依赖 —— 它是按 python 构造的,不只是按 rules 限制的。
+# 一个 web 仓里没有 requirements.txt,也需要 node 和一个浏览器。
+#
+# **在此之前 `kind: web` 的仓在 CI 里一次单测都没跑过**:`lint` 与 `test` 都带
+# `if $KIND == "python"`,而前端仓的 .gitlab-ci.yml 只有一个 include,从它本身看不出这件事。
+# 后果是前端的测试只有在有人本地想起来跑的时候才跑 —— 也就是基本不跑。
+#
+# 镜像与 npm 凭据的写法都跟着下面 `.build` 的 web 分支,故意不另发明一套:同一个 registry、
+# 同一个 node 大版本,测试环境和构建环境不该在这两件事上分叉。
+test-web:
+  stage: test
+  image: armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/node:22-alpine
+  rules:
+    - if: '$KIND == "web"'
+  variables:
+    # runner 挂了 /cache 卷。不用它的话每次都要重新拉一整个 node_modules。
+    npm_config_cache: /cache/npm
+  before_script:
+    # karma 要一个真的浏览器。alpine 仓库里的 chromium 就够 —— headless 跑单测不需要
+    # playwright 那一套(它还要额外一堆共享库)。
+    - apk add --no-cache chromium
+    - |
+      # 二进制名字在 alpine 各版本间变过(chromium / chromium-browser),所以探测而不是写死:
+      # 写死的那个哪天不在了,karma 的报错是"Cannot start ChromeHeadless",离原因很远。
+      # before_script 与 script 是同一个 shell,所以这里 export 一次就够。
+      for c in /usr/bin/chromium /usr/bin/chromium-browser; do
+        if [ -x "$c" ]; then export CHROME_BIN="$c"; break; fi
+      done
+      : "${CHROME_BIN:?apk 装完 chromium 之后仍然找不到可执行文件}"
+      echo "用 $CHROME_BIN"
+    - |
+      if [ -n "$NPM_AUTH_B64" ]; then
+        # 与 .build 的 web 分支同一套凭据写法。私有 registry 的包(@eds)没有它装不上。
+        {
+          echo "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/:_auth=$NPM_AUTH_B64"
+          echo "//arm.sero.gic.ericsson.se/artifactory/api/npm/proj-bce-npm/:always-auth=true"
+        } >> "$CTX/.npmrc"
+      fi
+    - cd "$CTX" && npm ci
+  script:
+    - |
+      # 与上面 python 那条同一个口径:没有测试不算失败,但要说出来。判据是 package.json 里
+      # 有没有这个脚本 —— 而不是让 npm 报一个 "missing script" 的非零退出。
+      if node -e "process.exit(require('./package.json').scripts?.['test:ci'] ? 0 : 1)"; then
+        npm run test:ci
+      else
+        echo "该仓没有 test:ci 脚本,跳过"
+      fi
+
 # ---------- 构建 ----------
 
 .kaniko:
