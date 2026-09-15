@@ -57,6 +57,33 @@ http:
       entryPoints: [web]
       middlewares: [fi-slash-redirect]
       service: fi
+    # PO 报表门户。**和 seqdiag / fi 不是同一种情况**:那两个的资源与 API 调用都是相对路径,
+    # 所以一个前缀 + stripPrefix 就够了。这个应用的跳转是**绝对路径** —— 落地页里写死
+    # `window.location.href = "/pm/" + name`(2026-09-15 在生产实例 :9020 上读出来的)。
+    # 于是只挂 /po/ 会坏在第二跳:点一个 PM,浏览器去 /pm/xxx,不再匹配 /po/,落到下面优先级 1
+    # 的 fe,用户看到门户前端的 not-found —— 现象离原因很远。
+    # 所以两条路由都要:/po/ 剥前缀给落地页,/pm/ **不剥**、原样交给它。
+    # 真正的修法是那个应用改用相对路径,那时这里可以只留 /po/。
+    po:
+      rule: "PathPrefix(`/po/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [po-strip]
+      service: po
+    # 少一个尾斜杠时重定向,理由同 seqdiag-slash。
+    po-slash:
+      rule: "Path(`/po`)"
+      priority: 110
+      entryPoints: [web]
+      middlewares: [po-slash-redirect]
+      service: po
+    # 详情页。**没有 stripPrefix** —— 这个前缀就是应用自己的路由。
+    # /pm 在门户前端的路由表里没有主(只落到它的 ** 兜底),所以这里接过来不抢任何东西。
+    pm:
+      rule: "PathPrefix(`/pm/`)"
+      priority: 100
+      entryPoints: [web]
+      service: po
     fe:
       rule: "PathPrefix(`/`)"
       priority: 1
@@ -89,6 +116,14 @@ http:
         regex: "^(https?://[^/]+)/fi$"
         replacement: "${1}/fi/"
         permanent: true
+    po-strip:
+      stripPrefix:
+        prefixes: ["/po"]
+    po-slash-redirect:
+      redirectRegex:
+        regex: "^(https?://[^/]+)/po$"
+        replacement: "${1}/po/"
+        permanent: true
 
   services:
     fe:
@@ -101,6 +136,9 @@ http:
       loadBalancer:
         # 测试环境没有自己的 psi,原本就指生产那一份(现在生产的 psi 已在集群里)
         servers: [{url: "http://product-structure-information:8000"}]   # 测试环境自己的一份
+    po:
+      loadBalancer:
+        servers: [{url: "http://po-reporting-portal:8000"}]   # 本环境自己的一份
     grafana:
       loadBalancer:
         # 这个地址是活的,而且是**必需**的:验收环境是 swarm、两个节点各一个副本,traefik
