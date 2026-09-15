@@ -16,3 +16,4 @@ sequence-diagram: swarm
 fi-analysis-judge: swarm
 fi-analysis: swarm
 
+po-reporting-portal: swarm

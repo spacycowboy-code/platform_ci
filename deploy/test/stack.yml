@@ -400,6 +400,41 @@ services:
         # kiro-cli 子进程上,内存给 4G 与 seqdiag 判定器持平。
         limits: {cpus: "2.0", memory: 4G}
 
+  # PO 报表门户(仓库 rp-ai-miao/pmo/dashboard-portal,平台里注册的服务名是 po-reporting-portal)。
+  #
+  # 与生产的三处刻意不同,都是被这个环境的形态逼出来的:
+  #  * **不发布端口**。生产是单机 compose、直接 9020:8000 对外(它没有走 nginx)。这里不能照搬:
+  #    swarm 发布端口走 ingress mesh、会在**每个**节点上绑,而 100.77.162.66 既是 test 集群的
+  #    节点、又是生产那台单机 —— 它上面的 9020 已经被生产容器占着(实测 /health 返回 200)。
+  #    照搬就是端口冲突。所以走边缘代理,和 seqdiag / fi 一样。
+  #  * **不挂日志卷**。/proj 只在一台机器上有,挂了就等于把副本钉死在那台;这是本环境既有的约定。
+  #  * **replicas: 1**,与生产的容器数一致。不写 2 是因为无法确认这个应用有没有服务端的按人状态,
+  #    而 test 的作用是预测生产 —— 副本数不一致会让"在 test 上没问题"这句话变弱。它没挂任何卷,
+  #    所以将来确认无状态后直接改 2 即可(那时要按本文件其它服务的样子补 max_replicas_per_node
+  #    与 stop-first)。
+  #  * 生产没有给它任何 env_file(prod/env-files.txt 里也没有它),所以这里同样不需要密钥变量。
+  po-reporting-portal:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/po-reporting-portal:${PO_REPORTING_PORTAL_TAG}
+    networks: [inner]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any}
+      # 单副本 + 两个可用节点,所以 start-first 能在另一台先起新任务、更新期间不断服务。
+      # (本文件里那些 stop-first 是被 max_replicas_per_node: 1 逼出来的,这里没有那个约束。)
+      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
+      rollback_config: {order: start-first}
+      resources:
+        # 报表数据打包在镜像里,自己不算重活;按 psi 那档给。
+        limits: {cpus: "1.0", memory: 1G}
+        reservations: {memory: 128M}
+
 configs:
   # 键名固定;真实对象名由内容哈希决定(见下),避免"忘记改版本号"导致静默不生效
   edge_static:

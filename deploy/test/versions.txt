@@ -21,6 +21,10 @@
 FI_ANALYSIS_JUDGE_TAG=-
 FI_ANALYSIS_TAG=-
 PRODUCT_STRUCTURE_INFORMATION_TAG=-
+# 本环境第一次纳入,所以这里是真实的初始标签而不是 '-':取生产 2026-09-14 06:22 那次
+# 成功部署实际在跑的镜像(po-reporting-portal:825102fe),也就是一个确实发布过的标签。
+# 第一次部署之后机器上的 .env 就是权威,这一行从此不参与。
+PO_REPORTING_PORTAL_TAG=825102fe
 RP_AI_PORTAL_BE_TAG=-
 RP_AI_PORTAL_FE_TAG=-
 SEQUENCE_DIAGRAM_JUDGE_TAG=-
