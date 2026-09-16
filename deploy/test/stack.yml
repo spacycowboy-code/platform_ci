@@ -435,6 +435,41 @@ services:
         limits: {cpus: "1.0", memory: 1G}
         reservations: {memory: 128M}
 
+  # ---------- 拓扑配置工具(纯静态单页)----------
+  # 仓库 rp-ai-miao/rsw/digital-chip-topology-configurator。一个自包含的 index.html
+  # (HTML/CSS/JS 全内联、无外部资源)。
+  #
+  # 与生产的两处不同,都是这个环境的形态决定的:
+  #  * **不发布端口**。生产是单机 compose、直接 9030:80 对外。这里不能照搬:swarm 发布端口走
+  #    ingress mesh 会在**每个**节点上绑,而 100.77.162.66 既是 test 集群的节点、又是生产那台
+  #    单机 —— 撞上生产已占的端口就起不来。所以走边缘代理,和 seqdiag / fi / po 一样。
+  #    对外地址是 :9101/topology/(路由在 edge-dynamic.yml)。
+  #  * **replicas: 1**,与生产的容器数一致 —— test 的作用是预测生产。它是纯静态、无状态、不挂卷,
+  #    真要两副本直接改 2 并补 max_replicas_per_node 与 stop-first 即可。
+  #
+  # 挂前缀不需要改这个镜像:整个工具是一个内联的 index.html,没有带路径的外部资源,
+  # 而它的 nginx 是 `try_files $uri $uri/ /index.html`,stripPrefix 之后任何路径都回它。
+  topology-configurator:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/digital-chip-topology-configurator:${DIGITAL_CHIP_TOPOLOGY_CONFIGURATOR_TAG}
+    networks: [inner]
+    healthcheck:
+      # 127.0.0.1 而不是 localhost:后者解析成 ::1,而镜像里的 nginx 只监听 IPv4(撞过)
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      replicas: 1
+      restart_policy: {condition: any}
+      # 单副本 + 两个可用节点,所以 start-first 能在另一台先起新任务、更新期间不断服务。
+      update_config: {order: start-first, failure_action: rollback, monitor: 30s}
+      rollback_config: {order: start-first}
+      resources:
+        # 一个 nginx 发 85KB 的静态文件,给多了是浪费。
+        limits: {cpus: "0.25", memory: 64M}
+        reservations: {memory: 16M}
+
 configs:
   # 键名固定;真实对象名由内容哈希决定(见下),避免"忘记改版本号"导致静默不生效
   edge_static:

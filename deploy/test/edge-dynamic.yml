@@ -84,6 +84,21 @@ http:
       priority: 100
       entryPoints: [web]
       service: po
+    # 拓扑配置工具。和 seqdiag / fi 同一种情况:整个工具是一个内联的 index.html,没有任何带
+    # 路径的外部资源,也没有绝对路径跳转,所以一个前缀 + stripPrefix 就够了,不需要第二条路由。
+    topology:
+      rule: "PathPrefix(`/topology/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [topology-strip]
+      service: topology
+    # 少一个尾斜杠时重定向,理由同 seqdiag-slash。
+    topology-slash:
+      rule: "Path(`/topology`)"
+      priority: 110
+      entryPoints: [web]
+      middlewares: [topology-slash-redirect]
+      service: topology
     fe:
       rule: "PathPrefix(`/`)"
       priority: 1
@@ -124,6 +139,14 @@ http:
         regex: "^(https?://[^/]+)/po$"
         replacement: "${1}/po/"
         permanent: true
+    topology-strip:
+      stripPrefix:
+        prefixes: ["/topology"]
+    topology-slash-redirect:
+      redirectRegex:
+        regex: "^(https?://[^/]+)/topology$"
+        replacement: "${1}/topology/"
+        permanent: true
 
   services:
     fe:
@@ -153,4 +176,8 @@ http:
     fi:
       loadBalancer:
         servers: [{url: "http://fi-analysis:8000"}]
+    topology:
+      loadBalancer:
+        # 纯静态 nginx,监听 80(不是 8000 —— 它不是那个 python 基础镜像)
+        servers: [{url: "http://topology-configurator:80"}]
 

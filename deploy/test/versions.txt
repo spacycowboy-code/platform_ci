@@ -25,6 +25,13 @@ PRODUCT_STRUCTURE_INFORMATION_TAG=-
 # 成功部署实际在跑的镜像(po-reporting-portal:825102fe),也就是一个确实发布过的标签。
 # 第一次部署之后机器上的 .env 就是权威,这一行从此不参与。
 PO_REPORTING_PORTAL_TAG=825102fe
+# 同样是本环境第一次纳入,所以写真实标签而不是 '-'。这个服务此前从没构建过(仓库原先用
+# GitLab Pages 发布),所以标签是先在服务仓点了一次 deploy-test 让它产出第一个镜像拿到的:
+# digital-chip-topology-configurator:409aafe8,已推到 proj-rp-ps-ai。
+# 不能写 '-':'-' 的意思是「已经在本环境跑着、版本由 .env 决定」,而集群里查不到它,
+# swarm-apply.sh 会走到 missing 分支 exit 1 —— 那正是这个文件要消灭的连坐。
+# 第一次真正部署之后机器上的 .env 就是权威,这一行从此不参与。
+DIGITAL_CHIP_TOPOLOGY_CONFIGURATOR_TAG=409aafe8
 RP_AI_PORTAL_BE_TAG=-
 RP_AI_PORTAL_FE_TAG=-
 SEQUENCE_DIAGRAM_JUDGE_TAG=-

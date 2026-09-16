@@ -19,3 +19,4 @@ work-connector: compose work-connector
 genius-ac: compose genius-ac
 genius-ac-judge: compose genius-ac-judge
 po-reporting-portal: compose po-reporting-portal
+digital-chip-topology-configurator: compose topology-configurator
