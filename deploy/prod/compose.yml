@@ -442,8 +442,9 @@ services:
       # 镜像名不能改:卷名与它绑定,改名会挂到一对空卷上,表现为未登录。
       - genius-ac-kiro-home:/root/.kiro
       - genius-ac-kiro-share:/root/.local/share/kiro-cli
-      # 代码 checkout,只读。宿主机路径与容器内路径 1:1,并由上面的 GENIUS_AC_CHECKOUT
-      # 与 WORK_DIR 指向同一个字符串。判定器不挂 KB 文档:它用镜像里自带的那份快照
+      # 代码 checkout,只读。宿主机路径与容器内路径 1:1,并由上面的 WORK_DIR 指向同一个
+      # 字符串 —— agent 的 read / grep / glob / code 四个工具就在这里看代码。
+      # 判定器不挂 KB 文档:它用镜像里自带的那份快照
       # (ac_kb_docs.py 的 _VENDORED_KB_DIR = kb/antennacalibration,Dockerfile.judge:39
       # 的 COPY kb ./kb 拷进去的),文档变动少、随镜像走即可。
       #
