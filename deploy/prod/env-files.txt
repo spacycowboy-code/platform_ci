@@ -6,3 +6,8 @@ grafana.env=GRAFANA_PROD_ENV
 eridoc-client.env=ERIDOC_PROD_ENV
 skill-audit.env=SKILL_AUDIT_PROD_ENV
 genius-ac.env=GENIUS_AC_PROD_ENV
+# 不是 env 文件,是被 compose 当单个文件挂进容器 /root/.jira_token 的 PAT 本身
+# (main.py:120 与 jira_ingest.py:327 都按这个路径读)。走这条投放通道而不是挂
+# /home/enawnfa/.jira_token,理由:凭据不该依赖某个人的 home 目录 —— 那样它没有轮换
+# 路径,而那个人换组或清理目录时,容器会因为 create_host_path: false 而起不来。
+genius-ac-jira-token=GENIUS_AC_JIRA_TOKEN

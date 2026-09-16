@@ -311,6 +311,11 @@ services:
       # 要收紧就把变量改成 AUTH_MODE=token + ENGINE_TOKEN=<串>,引擎启动时会强制校验
       # (main.py:53 对 token 模式下空 ENGINE_TOKEN 直接 RuntimeError)。
       - "9300:8000"
+    # 上限不是可选项:这台机器同时跑着生产的全部服务。没有上限的话,引擎一次跑飞就把同机的
+    # 门户后端和数据库挤死,而表现出来是"门户挂了",离原因很远 —— 与 skill-audit 同一个理由。
+    # 数值按实测留余量:引擎稳态约 70MiB(2026-09-16 docker stats),索引 KB 时会高一些。
+    mem_limit: 1g
+    cpus: "1.0"
     environment:
       # 部署的 commit,/health 会报出来、界面右下角当徽标显示。与镜像 tag 同一个值。
       APP_GIT_COMMIT: ${GENIUS_AC_TAG:-not-deployed}
@@ -341,6 +346,19 @@ services:
         bind: {create_host_path: false}
       # 代码 checkout。ac_learn_code 按 commit 学代码、kb_code 按文件行号存条目,
       # 所以这一份**没有**镜像内的兜底(KB 文档有,见 ac_kb_docs.py 的 _VENDORED_KB_DIR)。
+      #
+      # read_only 是刻意的,但要知道它的代价:界面上那个刷新按钮
+      # (POST /api/ac/admin/refresh)在重新索引之前会先对这个目录和 KB 目录各跑一次
+      # git fetch + reset --hard(main.py:1017/1023 的 _git_pull)。那两步在这里**跑不通**,
+      # 两个独立的原因,2026-09-16 都实测过:
+      #   1. 挂载是只读的(容器内 /proc/mounts 标 ro,.git 目录 test -w 为假)
+      #   2. 即使可写也过不去 —— 远端是 https://gerrit-sigma.gic.ericsson.se,容器里没有
+      #      任何 git 凭据,fetch 直接 "could not read Username"
+      # _git_pull 把错误收进返回的 JSON 就继续往下走,所以按钮**照样报成功**、重新索引也
+      # 真的做了 —— 只是索引的是磁盘上那份没变的代码。也就是说:**刷新按钮不会让代码变新**,
+      # 让它变新的动作在宿主机上(谁 git pull 这个目录),那个动作目前没有归属人。
+      # 要让按钮真的能拉,得先决定给容器一个 Gerrit 服务账号凭据、再把这里改成可写 ——
+      # 两件都不是配置层面能单独解决的,别顺手把 read_only 去掉了当修好。
       - type: bind
         source: /home/enawnfa/ac/antennacalibration
         target: /home/enawnfa/ac/antennacalibration
@@ -353,9 +371,14 @@ services:
         target: /home/enawnfa/ac/moduleSysBp8
         read_only: true
         bind: {create_host_path: false}
-      # Jira 读取用的 token(jira_ingest.py)。挂文件而不是目录,只读。
+      # Jira 读取用的 token(main.py:120 的后台 ingest 与 jira_ingest.py:327 都按
+      # /root/.jira_token 读)。源是部署任务投放到环境目录里的那份 ——
+      # env-files.txt 里 genius-ac-jira-token=GENIUS_AC_JIRA_TOKEN 那一行,
+      # 相对路径与 grafana / edge 那几处同一种写法(相对 compose 文件所在目录)。
+      # 不再挂 /home/enawnfa/.jira_token:凭据不该依赖某个人的 home。
+      # 内容有变要重建容器才生效 —— 文件型 bind 挂的是 inode,投放新文件不会影响在跑的容器。
       - type: bind
-        source: /home/enawnfa/.jira_token
+        source: ./genius-ac-jira-token
         target: /root/.jira_token
         read_only: true
         bind: {create_host_path: false}
@@ -386,12 +409,21 @@ services:
     env_file:
       - genius-ac.env
     environment:
-      # 判定器学代码要知道 checkout 在哪(ac_learn_code.py:40),WORK_DIR 是它跑
-      # kiro-cli 时的工作目录 —— 两个都指向下面挂进来的那份 checkout。
-      # 判定器不需要 GENIUS_AC_KB_DIR / GENIUS_AC_DB_DIR:文档用镜像自带的快照,
-      # 参数库只有引擎在读。
-      GENIUS_AC_CHECKOUT: /home/enawnfa/ac/antennacalibration
+      # kiro-cli 的工作目录 —— agent 的 read / grep / glob / code 四个工具就在这个目录下
+      # 看代码(agent json 的 allowedTools 只有这四个,没有 shell)。
+      # 名字看起来像个通用变量,其实是 pydantic-settings 的映射:Settings.work_dir
+      # (config.py:51)自动认 WORK_DIR,judge.py:82 把它当 AcpClient 的 cwd 传下去。
+      #
+      # 这里**刻意不设** GENIUS_AC_CHECKOUT:judge.py 只 import genius_ac.acp 与
+      # genius_ac.config,不 import ac_learn_code(那三个 ac_* 模块只被引擎 app/main.py
+      # 用);Settings 里也没有 checkout 字段(extra="ignore",所以会被直接丢掉);agent
+      # 又没有 shell 工具跑不了 python -m。三条都核实过,设了是个死变量。
       WORK_DIR: /home/enawnfa/ac/antennacalibration
+    # 上限的理由同引擎,但数值给得宽:判定器里跑的是 kiro-cli,一个会话能开多大内存没有
+    # 天然上界,而它是这个服务唯一持有模型登录态的进程 —— 被 OOM 杀掉就是"所有提问都失败"。
+    # 实测稳态约 430MiB(2026-09-16 docker stats),留约 9 倍余量。
+    mem_limit: 4g
+    cpus: "2.0"
     # 不发布端口。它是一个模型访问入口,能到达就能花额度、跑任意 prompt。
     # 引擎在同一个 compose 网络里按服务名访问它(genius-ac-judge:8790)。
     expose:
@@ -422,8 +454,11 @@ services:
         target: /home/enawnfa/ac/antennacalibration
         read_only: true
         bind: {create_host_path: false}
-      # 索引与知识条目。与引擎共用同一个卷:判定器的 ac_learn_code 往 kb_code.sqlite 写,
-      # 引擎的检索从同一个库读 —— 不共用,判定器学到的东西引擎永远看不见。
+      # 索引与知识条目。与引擎共用同一个卷。写入方是**引擎**:ac_learn_code / ac_kb_docs /
+      # ac_db 三个模块只被 app/main.py import,judge.py 只 import acp 与 config。
+      # (此处原先写的"判定器的 ac_learn_code 往里写"是错的,2026-09-16 核实后改。)
+      # 判定器仍要挂这个卷:它跑的 kiro-cli agent 通过 read/grep/glob/code 读同一份数据,
+      # 不共用就看不见引擎学到的东西。
       - genius-ac-data:/app/.kiro/agents-mine/ac-assistant/data
 
   # ---- 前端 ----
