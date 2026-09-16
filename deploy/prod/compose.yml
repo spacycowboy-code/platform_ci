@@ -311,14 +311,52 @@ services:
       # 要收紧就把变量改成 AUTH_MODE=token + ENGINE_TOKEN=<串>,引擎启动时会强制校验
       # (main.py:53 对 token 模式下空 ENGINE_TOKEN 直接 RuntimeError)。
       - "9300:8000"
+    environment:
+      # 部署的 commit,/health 会报出来、界面右下角当徽标显示。与镜像 tag 同一个值。
+      APP_GIT_COMMIT: ${GENIUS_AC_TAG:-not-deployed}
+      # 三个数据源的位置。**代码真的读这三个变量**(genius_ac/ac_kb_docs.py:51、
+      # ac_learn_code.py:40、ac_db.py:59),不设就退到代码里写死的开发机路径。
+      # 值等于下面 volumes 里的挂载点 —— 宿主机路径与容器内路径刻意 1:1,
+      # 这样"机器上在哪"和"容器里在哪"永远是同一个字符串,不会一边改一边忘。
+      #
+      # 为什么指向某个人的 home 而不是 /proj/rp_ait_prod/data:这三份数据现在只存在于
+      # 那里,是这个服务从手工部署时期就在用的原始位置。搬到 /proj 是下一步(见 DEPLOY.md),
+      # 不和"接进 CI"这一步混在一起做 —— 一次只变一件事。
+      GENIUS_AC_KB_DIR: /home/enawnfa/ac/ai-assets/knowledge/code/antennacalibration
+      GENIUS_AC_CHECKOUT: /home/enawnfa/ac/antennacalibration
+      GENIUS_AC_DB_DIR: /home/enawnfa/ac/moduleSysBp8/antennaCalibration
     volumes:
       # 引擎自己也要 KB。它的 _lifespan(main.py:58)在索引为空时跑 index_ac_docs ——
       # 而索引在容器可写层里,每次换容器都是空的,所以每次部署引擎都要重新读一遍 KB。
       # 少挂这一份的表现是 Understanding 永远答不出东西,而容器 healthy、日志一行
-      # "doc index skipped"。挂载点同判定器,理由见那边。
+      # "doc index skipped"。
+      #
+      # 用长语法且 create_host_path: false:短语法在源路径不存在时 docker 会**造一个空目录**,
+      # 而 ac_kb_docs.py:109 对不存在/空目录直接 return —— 于是 KB 空、检索零命中,
+      # 容器却 healthy。宁可起不来。
       - type: bind
-        source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
-        target: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
+        source: /home/enawnfa/ac/ai-assets/knowledge/code/antennacalibration
+        target: /home/enawnfa/ac/ai-assets/knowledge/code/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      # 代码 checkout。ac_learn_code 按 commit 学代码、kb_code 按文件行号存条目,
+      # 所以这一份**没有**镜像内的兜底(KB 文档有,见 ac_kb_docs.py 的 _VENDORED_KB_DIR)。
+      - type: bind
+        source: /home/enawnfa/ac/antennacalibration
+        target: /home/enawnfa/ac/antennacalibration
+        read_only: true
+        bind: {create_host_path: false}
+      # AC 无线参数库。Understanding 的 "DB config" 视图与那个刷新按钮读这里,
+      # 索引成 source_type=ac_db。同样没有镜像内兜底。
+      - type: bind
+        source: /home/enawnfa/ac/moduleSysBp8
+        target: /home/enawnfa/ac/moduleSysBp8
+        read_only: true
+        bind: {create_host_path: false}
+      # Jira 读取用的 token(jira_ingest.py)。挂文件而不是目录,只读。
+      - type: bind
+        source: /home/enawnfa/.jira_token
+        target: /root/.jira_token
         read_only: true
         bind: {create_host_path: false}
       # 索引 / 学习进度 / synthesis 写回的知识条目。全都落在 DATA_DIR
@@ -347,6 +385,13 @@ services:
     # 给"两边不一致"留了位置,而它的表现是每次 ask 都 401。
     env_file:
       - genius-ac.env
+    environment:
+      # 判定器学代码要知道 checkout 在哪(ac_learn_code.py:40),WORK_DIR 是它跑
+      # kiro-cli 时的工作目录 —— 两个都指向下面挂进来的那份 checkout。
+      # 判定器不需要 GENIUS_AC_KB_DIR / GENIUS_AC_DB_DIR:文档用镜像自带的快照,
+      # 参数库只有引擎在读。
+      GENIUS_AC_CHECKOUT: /home/enawnfa/ac/antennacalibration
+      WORK_DIR: /home/enawnfa/ac/antennacalibration
     # 不发布端口。它是一个模型访问入口,能到达就能花额度、跑任意 prompt。
     # 引擎在同一个 compose 网络里按服务名访问它(genius-ac-judge:8790)。
     expose:
@@ -365,26 +410,16 @@ services:
       # 镜像名不能改:卷名与它绑定,改名会挂到一对空卷上,表现为未登录。
       - genius-ac-kiro-home:/root/.kiro
       - genius-ac-kiro-share:/root/.local/share/kiro-cli
-      # 知识来源,只读。**容器内的挂载点必须是这两个写死的常量**:
-      #   ac_kb_docs.py:33   DEFAULT_AC_KB_DIR
-      #   ac_learn_code.py:32 DEFAULT_CHECKOUT
-      # DEPLOY.md 教人设的 GENIUS_AC_KB_DIR / GENIUS_AC_CHECKOUT 全仓没有一行代码读,
-      # 挂到别处等于没挂 —— 代码照样去看常量那个路径,找不到就 return,KB 空、检索零命中。
-      # 主机侧的源路径是另一回事:那两个常量在这台机器上都不存在(/proj/terass_func 整个
-      # 不存在,/repo 也不存在,核实过),它们是开发机的位置,所以源按本机约定
-      # (/proj/rp_ait_prod/data/<服务>)放,由人往里同步。
+      # 代码 checkout,只读。宿主机路径与容器内路径 1:1,并由上面的 GENIUS_AC_CHECKOUT
+      # 与 WORK_DIR 指向同一个字符串。判定器不挂 KB 文档:它用镜像里自带的那份快照
+      # (ac_kb_docs.py 的 _VENDORED_KB_DIR = kb/antennacalibration,Dockerfile.judge:39
+      # 的 COPY kb ./kb 拷进去的),文档变动少、随镜像走即可。
       #
-      # 用长语法且 create_host_path: false:短语法在源路径不存在时 docker 会**造一个空目录**,
-      # 而 ac_kb_docs.py:109 对不存在/空目录直接 return —— 于是 KB 空、检索零命中,
-      # 容器却 healthy、日志里只有一行 "doc index skipped"。宁可起不来。
+      # 长语法 + create_host_path: false:短语法在源路径不存在时 docker 会造一个空目录,
+      # 而空目录对检索等于没挂 —— 容器照样 healthy、只是什么都学不到。宁可起不来。
       - type: bind
-        source: /proj/rp_ait_prod/data/genius-ac/kb/antennacalibration
-        target: /proj/terass_func/TerassResult/Elvis/oneclick_AI_Agent/shared/kb/antennacalibration
-        read_only: true
-        bind: {create_host_path: false}
-      - type: bind
-        source: /proj/rp_ait_prod/data/genius-ac/antennacalibration
-        target: /repo/enawnfa/rsw/antennacalibration
+        source: /home/enawnfa/ac/antennacalibration
+        target: /home/enawnfa/ac/antennacalibration
         read_only: true
         bind: {create_host_path: false}
       # 索引与知识条目。与引擎共用同一个卷:判定器的 ac_learn_code 往 kb_code.sqlite 写,
