@@ -388,13 +388,22 @@ services:
         read_only: true
         bind: {create_host_path: false}
       # Jira 读取用的 token(main.py:120 的后台 ingest 与 jira_ingest.py:327 都按
-      # /root/.jira_token 读)。源是部署任务投放到环境目录里的那份 ——
-      # env-files.txt 里 genius-ac-jira-token=GENIUS_AC_JIRA_TOKEN 那一行,
-      # 相对路径与 grafana / edge 那几处同一种写法(相对 compose 文件所在目录)。
-      # 不再挂 /home/enawnfa/.jira_token:凭据不该依赖某个人的 home。
-      # 内容有变要重建容器才生效 —— 文件型 bind 挂的是 inode,投放新文件不会影响在跑的容器。
+      # /root/.jira_token 读)。
+      #
+      # 这里刻意**不走** env-files.txt 那条投放通道,虽然那才是这台机器上凭据的常规做法。
+      # 2026-09-16 试过一次又撤回来了,理由是可见范围:这是 Iris 本人的 Jira 个人访问令牌
+      # (PAT),放进 platform-ci 的 CI 变量后,这个项目的 11 个 Maintainer/Owner 都能在
+      # 设置页明文看到它 —— File 型变量勾不了 masked,而 masked 本来也只管日志、不管设置页。
+      # 挂在她 home 下反而只有她和 root 能读,对**个人**凭据来说那是更小的暴露面。
+      # 代价是这个凭据没有轮换路径,而且她清理目录或换机器时容器会起不来
+      # (create_host_path: false,起不来比静默读到空文件好)。这是明知的取舍。
+      #
+      # 真正的解法不是在这两者之间选,而是换掉凭据的性质:申请一个 Jira 功能账号,
+      # 像这台机器上另外两个外部凭据那样(LDAP 绑定用 ecnrpai@ericsson.se、
+      # GitLab 用 project_139337_bot_)。功能账号的 token 放 CI 变量就没有这个顾虑,
+      # 那时再搬。**在那之前别再把它挪进 CI 变量** —— 那一步已经走过一次并撤回。
       - type: bind
-        source: ./genius-ac-jira-token
+        source: /home/enawnfa/.jira_token
         target: /root/.jira_token
         read_only: true
         bind: {create_host_path: false}
