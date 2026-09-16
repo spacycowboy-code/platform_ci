@@ -17,3 +17,4 @@ fi-analysis-judge: swarm
 fi-analysis: swarm
 
 po-reporting-portal: swarm
+digital-chip-topology-configurator: swarm

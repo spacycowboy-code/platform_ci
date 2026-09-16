@@ -496,6 +496,32 @@ services:
       retries: 3
       start_period: 10s
 
+  # ---- 拓扑配置工具(纯静态单页)----
+  # 仓库 rp-ai-miao/rsw/digital-chip-topology-configurator。一个自包含的 index.html
+  # (HTML/CSS/JS 全内联、无外部资源),所以没有后端、没有上游、不挂目录、不要密钥,
+  # 这一段比别的都短。
+  #
+  # 端口 9030:这台机器上 90xx 段已占 9000(审计后端)、9001(edge 老入口)、9010(psi)、
+  # 9020(po-reporting-portal),另有 9201、9300(genius-ac);9030 是 90x0 这条序列的下一个。
+  #
+  # 不挂在 edge 的 nginx 后面:那份路由映射是门户的,把一个无关的独立工具页插进去要占一个
+  # 路径前缀、并且改了要手动 `docker compose up -d edge`(edge 不在 services.txt 里)。
+  # 给它一个自己的端口更便宜、也更好回退 —— 删掉这一段就没了,门户零改动。
+  topology-configurator:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/digital-chip-topology-configurator:${DIGITAL_CHIP_TOPOLOGY_CONFIGURATOR_TAG:-not-deployed}
+    container_name: digital-chip-topology-configurator
+    restart: unless-stopped
+    ports:
+      - "9030:80"
+    healthcheck:
+      # 127.0.0.1 而不是 localhost:后者同时解析到 ::1,而镜像里的 nginx 只监听 IPv4,
+      # 探测会一直被拒、容器长期 unhealthy 而站点其实是好的(前端那段撞过)。
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
 volumes:
   # 声明为外部卷:这些数据先于本描述存在,compose 不该按项目名新建一套。
   judge-kiro-home:
