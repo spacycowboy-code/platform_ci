@@ -330,6 +330,22 @@ services:
       GENIUS_AC_KB_DIR: /home/enawnfa/ac/ai-assets/knowledge/code/antennacalibration
       GENIUS_AC_CHECKOUT: /home/enawnfa/ac/antennacalibration
       GENIUS_AC_DB_DIR: /home/enawnfa/ac/moduleSysBp8/antennaCalibration
+      # 让容器里的 git 认这个 checkout。目录属主是 enawnfa 的 uid,容器以 root 跑,
+      # git 的 safe.directory 保护因此拒绝操作它:
+      #     fatal: detected dubious ownership in repository at '/home/enawnfa/ac/antennacalibration'
+      # 表现不是报错崩掉,而是**静默丢掉版本归属**:learn() 用 git rev-parse 记录学的是哪个
+      # commit(ac_learn_code.py:179-180),拿不到就写 None,于是代码层的知识条目说不出
+      # "这一行来自哪个版本";/api/ac/admin/status 里 ac_code.head 一直是 null 就是这个。
+      # 检索本身照常工作,所以从界面上看不出来。
+      #
+      # 用 GIT_CONFIG_* 三件套而不是 git config --global:后者要往容器里写文件,
+      # 每次换容器都得重做。范围只给这一个目录,不写 * —— 没必要在容器里整个关掉这道保护。
+      # KB 目录不需要:实测它往上五层都没有 .git,不是 git 仓库
+      # (所以刷新按钮对它报 "KB is vendored (not a live git repo)",那是对的)。
+      # 判定器不需要:它不 import ac_learn_code,agent 也没有 shell 工具,跑不到 git。
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /home/enawnfa/ac/antennacalibration
     volumes:
       # 引擎自己也要 KB。它的 _lifespan(main.py:58)在索引为空时跑 index_ac_docs ——
       # 而索引在容器可写层里,每次换容器都是空的,所以每次部署引擎都要重新读一遍 KB。
