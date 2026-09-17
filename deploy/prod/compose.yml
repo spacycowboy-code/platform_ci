@@ -87,6 +87,9 @@ services:
         - "9020:8000"
       volumes:
         - /proj/rp_ait_prod/logs/po-reporting-portal:/app/logs
+        - /proj/rp_ait_prod/data/po-reporting-portal:/app/data
+      env_file:
+        - po-reporting-portal.env
       healthcheck:
         test: ["CMD", "python", "-c",
                "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status
@@ -95,7 +98,11 @@ services:
         timeout: 5s
         retries: 3
         start_period: 15s
-      # 报表数据已打包进镜像(/app/PO_Reporting_Data),不挂载宿主机数据目录。
+      # v2(2026-09):Flask+数据打包进镜像 → FastAPI+网页上传。数据不再进镜像,改为落盘到
+      # 持久卷 /app/data(current.xlsx + history/)。用 bind mount 到 /proj/rp_ait_prod/data/...
+      # 与 rtep-flow-manager 同一约定:宿主机路径,容器/镜像重建后数据仍在(换机器才会丢,可网页重传)。
+      # env_file 注入 UPLOAD_TOKEN(网页上传口令),内容由部署任务从 PO_PORTAL_PROD_ENV 投放。
+      # 详见服务仓 docs/PLATFORM_CI_PATCH.md。
   
   # agent-artifex 属于本环境但当前不运行(容器自 2026-08-05 起是 Exited)。
   # profiles 让 docker compose up 跳过它;删掉 profiles 两行即启动。
