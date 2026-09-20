@@ -522,6 +522,93 @@ services:
       retries: 3
       start_period: 10s
 
+  # ---- ReqFlow 结果核查:界面 + 判定器 ----
+  # 一个仓构建两个镜像(rp-ai-miao/ps/reqflow-result-check)。核查本身**不需要模型** ——
+  # 三步对比、少选分诊、来源定位、HTML 报告全是算出来的;需要模型的只有「逐条复核谁对」这一件
+  # 事。所以判定器不可用时界面照常可用,只少「谁对」那一栏(服务仓 checker/llm_results.py 的
+  # 读取纪律把这件事写成了测试)。
+  reqflow-result-check:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/reqflow-result-check:${REQFLOW_RESULT_CHECK_TAG:-not-deployed}
+    container_name: reqflow-result-check
+    restart: unless-stopped
+    ports:
+      # 9040 是按现有规律取的下一个十位(9000 audit-backend / 9010 psi / 9020 po /
+      # 9030 topology)。生产的 edge 是 nginx 而不是 Traefik,走路径前缀要改 nginx 配置,
+      # 所以这里和其他几个服务一样直接给端口。测试环境那侧不占端口,走 :9101/reqflow/。
+      #
+      # **这个口子没有鉴权。** 和 genius-ac 的 9300 是同一类明知的取舍,但多一层:包里是
+      # AIR 3284 的真实需求内容 —— 能到达 9040 的人既能看这些内容,也能花模型额度
+      # (界面会把请求转给判定器,而判定器持有 kiro-cli 的登录态)。2026-09-20 由 Miao 明确
+      # 接受。要收紧得在服务仓加登录,不是改这里。
+      - "9040:8000"
+    # reqflow-result-check.env(File 型 CI 变量 REQFLOW_RESULT_CHECK_PROD_ENV)里的键 ——
+    # 那份文件不在 git 里,键的存在在这个仓库中完全不可见,所以按 PLATFORM.md 的约定列在这里:
+    #   REQFLOW_OPENAI_ENDPOINT_URL   指向判定器,写全路径:
+    #                                 http://reqflow-result-check-judge:8790/v1/chat/completions
+    #                                 服务仓 reqflow/llm_client.py 里这个变量是**整体覆盖**端点,
+    #                                 所以不受它那条写死的 azure 路径影响
+    #   REQFLOW_AUTH_TOKEN            界面调判定器时带的令牌,必须与判定器的
+    #                                 REQFLOW_JUDGE_TOKEN 同值,否则每次复核 401
+    #   REQFLOW_JUDGE_TOKEN           判定器侧校验的那一串(同上)
+    #   REQFLOW_JUDGE_KIRO_MODEL      判定器用哪个模型。**钉死,不要 auto** —— 核查报告的可信度
+    #                                 建立在「这批结论是哪个模型给的」上,auto 换了没人看得出来。
+    #                                 这里用 claude-opus-5 而非另外三个判定器的 sonnet:
+    #                                 这个判定器裁决的是「另一个大模型判错了还是人判错了」
+    env_file:
+      - reqflow-result-check.env
+    healthcheck:
+      # 用 127.0.0.1 而不是 localhost:localhost 会走 ::1,而这个服务(Flask 经 a2wsgi 由
+      # uvicorn 起)只监听 IPv4,现象是「容器 unhealthy 但服务能访问」—— README 的排错表里
+      # 专门列了这一条。
+      #
+      # 刻意不探判定器:探它要真跑一次 ACP(几十秒、花配额),而健康检查失败会让 compose 重建
+      # 容器。判定器登录态失效的表现是每次复核都失败,不是界面 unhealthy。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 启动时要 import openpyxl 那条链,冷启动慢一截。
+      start_period: 40s
+    volumes:
+      # 日志,与其他服务同一套约定(log_conf.yaml 让 uvicorn 同时写 stdout 和 /app/logs)。
+      - /proj/rp_ait_prod/logs/reqflow-result-check:/app/logs
+
+  # ReqFlow 核查的判定器。和另外三个判定器(audit-judge / genius-ac-judge,以及集群里的
+  # sequence-diagram-judge / fi-analysis-judge)一个都不能共用:
+  #   · 卷独占 —— 同一个 kiro-cli 配置目录被两个容器同时写会互相踩;
+  #   · 端点 agent 不同 —— 这个要求回一个 JSON **对象**(与 audit-judge 同类),
+  #     fi 那个要 JSON 数组、seqdiag 那个要 PlantUML。喂错了两次尝试全白跑。
+  reqflow-result-check-judge:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/reqflow-result-check-judge:${REQFLOW_RESULT_CHECK_JUDGE_TAG:-not-deployed}
+    container_name: reqflow-result-check-judge
+    restart: unless-stopped
+    # 与界面同一个 env 文件:REQFLOW_JUDGE_TOKEN 必须等于界面带的那个令牌,分成两个文件就等于
+    # 给"两边不一致"留了位置,而它的表现是每次复核都 401。
+    env_file:
+      - reqflow-result-check.env
+    # 不发布端口。它是一个模型访问入口,能到达就能花额度、跑任意 prompt。
+    # 界面在同一个 compose 网络里按服务名访问它(reqflow-result-check-judge:8790)。
+    expose:
+      - "8790"
+    healthcheck:
+      # 判定器降级(未登录、模型不可用)在业务上只表现为"复核那一栏一直空着",
+      # 真正的原因在它自己的输出里 —— 所以要有容器层面的可见性。
+      # 注意它**不检查登录态**(那要真跑一次 ACP):healthy 不等于能出结论。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8790/health').status == 200 else 1)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    volumes:
+      # kiro-cli 的 SSO 登录态。不在任何备份里;丢了就要手动再 kiro-cli login 一次。
+      - reqflow-kiro-home:/root/.kiro
+      - reqflow-kiro-share:/root/.local/share/kiro-cli
+      # 日志。判定器的日志比界面更该留:"未登录"这个故障在业务上只表现为"复核那一栏空着",
+      # 真正的原因写在它自己的输出里。
+      - /proj/rp_ait_prod/logs/reqflow-result-check-judge:/app/logs
+
 volumes:
   # 声明为外部卷:这些数据先于本描述存在,compose 不该按项目名新建一套。
   judge-kiro-home:
@@ -548,3 +635,14 @@ volumes:
   genius-ac-data:
     external: true
     name: genius-ac_data
+  # ReqFlow 核查判定器的 SSO 登录态。同样 external + 名字写死,理由同上:派生名跟着 compose
+  # 项目目录走,换一次目录就挂到一对空卷上,表现为"未登录",而那离真实原因很远。
+  # 首次部署前在主机上建一次:
+  #   docker volume create reqflow-result-check_judge-kiro-home
+  #   docker volume create reqflow-result-check_judge-kiro-share
+  reqflow-kiro-home:
+    external: true
+    name: reqflow-result-check_judge-kiro-home
+  reqflow-kiro-share:
+    external: true
+    name: reqflow-result-check_judge-kiro-share

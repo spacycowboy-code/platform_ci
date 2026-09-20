@@ -57,6 +57,25 @@ http:
       entryPoints: [web]
       middlewares: [fi-slash-redirect]
       service: fi
+    # ReqFlow 结果核查。和 seqdiag / fi 同一种情况:资源与 API 调用都是**相对路径**
+    # (2026-09-20 把 webapp/static 里 11 处 '/api/...' 和 index.html 里 4 处 '/static/...'
+    # 改成了相对路径,正是为了落进这一类),所以一个前缀 + stripPrefix 就够了,
+    # 不需要像 po/pm 那样加第二条不剥前缀的路由。
+    reqflow:
+      rule: "PathPrefix(`/reqflow/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [reqflow-strip]
+      service: reqflow
+    # 少一个尾斜杠时重定向,理由同 seqdiag-slash —— 而且对这个服务是**必需**的:
+    # 相对路径的 API 调用要靠尾斜杠才解析正确,没有尾斜杠时 `api/runs` 会被解析成 /api/runs,
+    # 那条路径在边缘上属于审计后端。
+    reqflow-slash:
+      rule: "Path(`/reqflow`)"
+      priority: 110
+      entryPoints: [web]
+      middlewares: [reqflow-slash-redirect]
+      service: reqflow
     # PO 报表门户。**和 seqdiag / fi 不是同一种情况**:那两个的资源与 API 调用都是相对路径,
     # 所以一个前缀 + stripPrefix 就够了。这个应用的跳转是**绝对路径** —— 落地页里写死
     # `window.location.href = "/pm/" + name`(2026-09-15 在生产实例 :9020 上读出来的)。
@@ -131,6 +150,14 @@ http:
         regex: "^(https?://[^/]+)/fi$"
         replacement: "${1}/fi/"
         permanent: true
+    reqflow-strip:
+      stripPrefix:
+        prefixes: ["/reqflow"]
+    reqflow-slash-redirect:
+      redirectRegex:
+        regex: "^(https?://[^/]+)/reqflow$"
+        replacement: "${1}/reqflow/"
+        permanent: true
     po-strip:
       stripPrefix:
         prefixes: ["/po"]
@@ -176,6 +203,11 @@ http:
     fi:
       loadBalancer:
         servers: [{url: "http://fi-analysis:8000"}]
+    reqflow:
+      loadBalancer:
+        # 只指界面。判定器不在这里出现 —— 它刻意不发布任何对外入口,
+        # 端口就是模型额度本身,只有界面按服务名在 inner 网络里够得着它。
+        servers: [{url: "http://reqflow-result-check:8000"}]
     topology:
       loadBalancer:
         # 纯静态 nginx,监听 80(不是 8000 —— 它不是那个 python 基础镜像)
