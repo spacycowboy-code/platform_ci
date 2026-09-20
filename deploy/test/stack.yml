@@ -476,6 +476,92 @@ services:
         limits: {cpus: "0.25", memory: 64M}
         reservations: {memory: 16M}
 
+  # ---- ReqFlow 结果核查:界面 + 判定器 ----
+  # 一个仓构建两个镜像(rp-ai-miao/ps/reqflow-result-check)。核查本身**不需要模型** ——
+  # 三步对比、少选分诊、来源定位、HTML 报告全是算出来的;需要模型的只有「逐条复核谁对」这一件
+  # 事。所以判定器不可用时界面照常可用,只少「谁对」那一栏(服务仓 checker/llm_results.py 的
+  # 读取纪律把这件事写成了测试)。
+  #
+  # 对外地址是 :9101/reqflow/(路由在 edge-dynamic.yml)。不发布宿主机端口。
+  reqflow-result-check:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/reqflow-result-check:${REQFLOW_RESULT_CHECK_TAG}
+    networks: [inner]
+    # reqflow-result-check.env(File 型 CI 变量 REQFLOW_RESULT_CHECK_TEST_ENV)里的键 ——
+    # 那份文件不在 git 里,键的存在在这个仓库中完全不可见,所以按 PLATFORM.md 的约定列在这里:
+    #   REQFLOW_OPENAI_ENDPOINT_URL   指向判定器,写全路径:
+    #                                 http://reqflow-result-check-judge:8790/v1/chat/completions
+    #                                 服务仓 reqflow/llm_client.py 里这个变量是**整体覆盖**端点,
+    #                                 所以不受它那条写死的 azure 路径影响
+    #   REQFLOW_AUTH_TOKEN            界面调判定器时带的令牌,必须与下面的
+    #                                 REQFLOW_JUDGE_TOKEN 同值,否则每次复核 401
+    #   REQFLOW_JUDGE_TOKEN           判定器侧校验的那一串(同上)
+    #   REQFLOW_JUDGE_KIRO_MODEL      判定器用哪个模型。**钉死,不要 auto** —— 核查报告的可信度
+    #                                 建立在「这批结论是哪个模型给的」上,auto 换了没人看得出来。
+    #                                 这里用 claude-opus-5 而非另外三个判定器的 sonnet:
+    #                                 这个判定器裁决的是「另一个大模型判错了还是人判错了」
+    #
+    # **这个服务没有鉴权。** 和 genius-ac 是同一类明知的取舍(见生产 compose.yml 里 9300 那段),
+    # 但多一层:包里是 AIR 3284 的真实需求内容。能到达 :9101/reqflow/ 的人既能看这些内容、
+    # 也能花模型额度。2026-09-20 由 Miao 明确接受。要收紧得在服务仓加登录,不是改这里。
+    env_file: [reqflow-result-check.env]
+    healthcheck:
+      # 只证明进程活着。刻意不探判定器 —— 探它要真跑一次 ACP(几十秒、花配额),而健康检查失败
+      # 会让编排换掉容器。判定器登录态失效的表现是每次复核都失败,不是界面 unhealthy。
+      #
+      # 用 127.0.0.1 而不是 localhost:localhost 会走 ::1,而这个服务(Flask 经 a2wsgi 由
+      # uvicorn 起)只监听 IPv4,现象是「容器 unhealthy 但服务能访问」—— README 的排错表里
+      # 专门列了这一条。
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # 与 fi-analysis 持平:这个镜像启动时也要 import openpyxl 那条链,冷启动慢一截。
+      start_period: 40s
+    deploy:
+      # 单副本不是保守取值:界面把令牌存在 app 实例上(进程级、不落盘),多副本时只有粘过令牌
+      # 那个副本能调模型,其余全 401,而且表现是随机失败不是全挂。要解开得在服务仓改令牌的存法。
+      replicas: 1
+      restart_policy: {condition: any}
+      # start-first:单副本 + 界面自己不挂卷,新任务可以先起来,切换时不留空窗。
+      update_config: {order: start-first, failure_action: rollback, monitor: 40s}
+      rollback_config: {order: start-first}
+      resources:
+        limits: {cpus: "1.0", memory: 2G}
+
+  # ReqFlow 核查的判定器。和另外三个判定器(audit-judge / sequence-diagram-judge /
+  # fi-analysis-judge)是**四个**服务,一个都不能共用:
+  #   · 卷独占 —— 同一个 kiro-cli 配置目录被两个容器同时写会互相踩;
+  #   · 端点 agent 不同 —— 这个要求回一个 JSON **对象**(与 audit-judge 同类),
+  #     fi 那个要 JSON 数组、seqdiag 那个要 PlantUML。喂错了两次尝试全白跑。
+  reqflow-result-check-judge:
+    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/reqflow-result-check-judge:${REQFLOW_RESULT_CHECK_JUDGE_TAG}
+    networks: [inner]
+    # 和界面共用同一份 .env(键的清单见上面)。判定器只用到 REQFLOW_JUDGE_TOKEN、
+    # REQFLOW_JUDGE_KIRO_MODEL,以及可选的 REQFLOW_JUDGE_MAX_CONCURRENCY。
+    # 共用一份的理由是那两个 token 必须同值 —— 分成两份文件迟早会漂,而漂了的现象是 401。
+    env_file: [reqflow-result-check.env]
+    volumes:
+      # kiro-cli 的登录状态。**不在任何备份里**,失效只能人工重新 kiro-cli login。
+      - reqflow-kiro-home:/root/.kiro
+      - reqflow-kiro-share:/root/.local/share/kiro-cli
+    deploy:
+      # 单副本且必须钉住某一台:登录态在那台机器的命名卷里,调度到别处就是一对空卷。
+      # 钉在 node-100-78-224-45,和 sequence-diagram-judge / fi-analysis-judge 同一台。
+      # 代价说清楚:那台上已经有两个判定器,CI runner(concurrent=3)也在那台,四个东西抢 CPU。
+      # 而这个判定器的调用方是 700 多条的跑批、不是交互式单次请求 —— 所以服务仓侧把并发压到 2
+      # (judge/config.py 的 MAX_CONCURRENCY),超出回 429 让调用方自己退避重试。
+      replicas: 1
+      placement:
+        constraints: [node.hostname == node-100-78-224-45]
+      restart_policy: {condition: any}
+      # stop-first:卷是独占的,start-first 会让两个容器同时挂同一个 kiro 配置目录。
+      # 含义是每次部署都有一段**真停机**,不是零停机滚动。
+      update_config: {order: stop-first}
+      resources:
+        # 与另外两个判定器持平。开销主要在 kiro-cli 子进程上,并发 2 时最多两个。
+        limits: {cpus: "2.0", memory: 4G}
+
 configs:
   # 键名固定;真实对象名由内容哈希决定(见下),避免"忘记改版本号"导致静默不生效
   edge_static:
@@ -528,6 +614,16 @@ volumes:
   fi-kiro-share:
     external: true
     name: fi-analysis_judge-kiro-share
+  # ReqFlow 核查判定器的登录态。同样 external + 写死名字,同样**要先在跑它的那台机器上手工建**
+  # (钉在 node-100-78-224-45)。external 卷不存在时 stack deploy 直接失败:
+  #   ssh node-100-78-224-45 'docker volume create reqflow-result-check_judge-kiro-home;
+  #                           docker volume create reqflow-result-check_judge-kiro-share'
+  reqflow-kiro-home:
+    external: true
+    name: reqflow-result-check_judge-kiro-home
+  reqflow-kiro-share:
+    external: true
+    name: reqflow-result-check_judge-kiro-share
   db-data:
     external: true
     name: ai-portal-audit-staging_db-data

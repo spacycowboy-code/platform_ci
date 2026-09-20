@@ -18,3 +18,8 @@ fi-analysis: swarm
 
 po-reporting-portal: swarm
 digital-chip-topology-configurator: swarm
+
+# ReqFlow 结果核查。和 fi-analysis / sequence-diagram 同一个形状:一个仓两个镜像,
+# 界面不持有任何模型凭据,判定器持有 kiro-cli 的登录态。
+reqflow-result-check: swarm
+reqflow-result-check-judge: swarm

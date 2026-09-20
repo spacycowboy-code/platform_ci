@@ -5,6 +5,9 @@ skill-audit.env=SKILL_AUDIT_TEST_ENV=swarm
 sequence-diagram.env=SEQUENCE_DIAGRAM_TEST_ENV=swarm
 # 引擎与判定器共用一份:LLM_API_KEY 与 FI_JUDGE_TOKEN 必须同值,分成两份迟早会漂。
 fi-analysis.env=FI_ANALYSIS_TEST_ENV=swarm
+# 同上理由:核查界面粘给判定器的令牌与判定器自己校验的 REQFLOW_JUDGE_TOKEN 必须同值,
+# 漂了的现象是每次复核 401。
+reqflow-result-check.env=REQFLOW_RESULT_CHECK_TEST_ENV=swarm
 # PO 报表门户的网页上传口令(UPLOAD_TOKEN)。见服务仓 docs/PLATFORM_CI_PATCH.md。
 po-reporting-portal.env=PO_PORTAL_TEST_ENV=swarm
 

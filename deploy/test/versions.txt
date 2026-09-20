@@ -34,6 +34,18 @@ PO_REPORTING_PORTAL_TAG=825102fe
 DIGITAL_CHIP_TOPOLOGY_CONFIGURATOR_TAG=409aafe8
 RP_AI_PORTAL_BE_TAG=-
 RP_AI_PORTAL_FE_TAG=-
+# ReqFlow 结果核查,本环境第一次纳入,所以必须写**真实的初始标签**而不是 '-'。
+# '-' 的意思是「已经在本环境跑着、版本由机器上的 .env 决定」,而集群里查不到它时
+# swarm-apply.sh 会走 missing 分支 exit 1 —— 那正是这个文件要消灭的连坐。
+#
+# 标签取自 2026-09-20 09:42 在服务仓 feature/kiro-judge 上点的那次 deploy-test:
+# 两个镜像都已推到 proj-rp-ps-ai（reqflow-result-check:1182943a 与
+# reqflow-result-check-judge:1182943a，同一个标签 —— deploy 任务对 extra_service 的处理是
+# 两个镜像同一个标签一起部署）。那次的下游 apply 按预期失败在
+# 「deploy/test/services.txt 里没有 reqflow-result-check 这一行」这个闸门上，没有触及环境。
+# 第一次真正部署之后机器上的 .env 就是权威，这两行从此不参与。
+REQFLOW_RESULT_CHECK_TAG=1182943a
+REQFLOW_RESULT_CHECK_JUDGE_TAG=1182943a
 SEQUENCE_DIAGRAM_JUDGE_TAG=-
 SEQUENCE_DIAGRAM_TAG=-
 SKILL_AUDIT_JUDGE_TAG=-
