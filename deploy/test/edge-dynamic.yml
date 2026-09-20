@@ -57,10 +57,10 @@ http:
       entryPoints: [web]
       middlewares: [fi-slash-redirect]
       service: fi
-    # ReqFlow 结果核查。和 seqdiag / fi 同一种情况:资源与 API 调用都是**相对路径**
+    # ReqFlow 结果核查。和 seqdiag / fi / po 同一种情况:资源与 API 调用都是**相对路径**
     # (2026-09-20 把 webapp/static 里 11 处 '/api/...' 和 index.html 里 4 处 '/static/...'
-    # 改成了相对路径,正是为了落进这一类),所以一个前缀 + stripPrefix 就够了,
-    # 不需要像 po/pm 那样加第二条不剥前缀的路由。
+    # 改成了相对路径,正是为了落进这一类),所以一个前缀 + stripPrefix 就够了,不需要第二条
+    # 不剥前缀的路由。
     reqflow:
       rule: "PathPrefix(`/reqflow/`)"
       priority: 100
@@ -76,13 +76,11 @@ http:
       entryPoints: [web]
       middlewares: [reqflow-slash-redirect]
       service: reqflow
-    # PO 报表门户。**和 seqdiag / fi 不是同一种情况**:那两个的资源与 API 调用都是相对路径,
-    # 所以一个前缀 + stripPrefix 就够了。这个应用的跳转是**绝对路径** —— 落地页里写死
-    # `window.location.href = "/pm/" + name`(2026-09-15 在生产实例 :9020 上读出来的)。
-    # 于是只挂 /po/ 会坏在第二跳:点一个 PM,浏览器去 /pm/xxx,不再匹配 /po/,落到下面优先级 1
-    # 的 fe,用户看到门户前端的 not-found —— 现象离原因很远。
-    # 所以两条路由都要:/po/ 剥前缀给落地页,/pm/ **不剥**、原样交给它。
-    # 真正的修法是那个应用改用相对路径,那时这里可以只留 /po/。
+    # PO 报表门户。和 seqdiag / fi 同一种情况:资源与 API 调用都是相对路径,
+    # 所以一个前缀 + stripPrefix 就够了,不需要第二条路由。
+    # (历史:v1 是 Flask 多页版,落地页写死 `window.location.href="/pm/"+name` 绝对跳转,
+    #  当时还要额外一条不 strip 的 /pm/ 路由。v2 改成 FastAPI 单页 + 相对路径后已去掉那条,
+    #  见服务仓 docs/PLATFORM_CI_PATCH.md。)
     po:
       rule: "PathPrefix(`/po/`)"
       priority: 100
@@ -95,13 +93,6 @@ http:
       priority: 110
       entryPoints: [web]
       middlewares: [po-slash-redirect]
-      service: po
-    # 详情页。**没有 stripPrefix** —— 这个前缀就是应用自己的路由。
-    # /pm 在门户前端的路由表里没有主(只落到它的 ** 兜底),所以这里接过来不抢任何东西。
-    pm:
-      rule: "PathPrefix(`/pm/`)"
-      priority: 100
-      entryPoints: [web]
       service: po
     # 拓扑配置工具。和 seqdiag / fi 同一种情况:整个工具是一个内联的 index.html,没有任何带
     # 路径的外部资源,也没有绝对路径跳转,所以一个前缀 + stripPrefix 就够了,不需要第二条路由。

@@ -9,3 +9,4 @@ genius-ac.env=GENIUS_AC_PROD_ENV
 # 界面与判定器共用一份:界面带的令牌与判定器的 REQFLOW_JUDGE_TOKEN 必须同值,
 # 分成两份迟早会漂,而漂了的现象是每次复核 401。形态省略 = 投到单机(生产还在 compose 上)。
 reqflow-result-check.env=REQFLOW_RESULT_CHECK_PROD_ENV
+po-reporting-portal.env=PO_PORTAL_PROD_ENV

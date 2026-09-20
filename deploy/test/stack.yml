@@ -402,20 +402,25 @@ services:
 
   # PO 报表门户(仓库 rp-ai-miao/pmo/dashboard-portal,平台里注册的服务名是 po-reporting-portal)。
   #
-  # 与生产的三处刻意不同,都是被这个环境的形态逼出来的:
+  # 与生产的不同,都是被这个环境的形态逼出来的:
   #  * **不发布端口**。生产是单机 compose、直接 9020:8000 对外(它没有走 nginx)。这里不能照搬:
   #    swarm 发布端口走 ingress mesh、会在**每个**节点上绑,而 100.77.162.66 既是 test 集群的
   #    节点、又是生产那台单机 —— 它上面的 9020 已经被生产容器占着(实测 /health 返回 200)。
   #    照搬就是端口冲突。所以走边缘代理,和 seqdiag / fi 一样。
-  #  * **不挂日志卷**。/proj 只在一台机器上有,挂了就等于把副本钉死在那台;这是本环境既有的约定。
-  #  * **replicas: 1**,与生产的容器数一致。不写 2 是因为无法确认这个应用有没有服务端的按人状态,
-  #    而 test 的作用是预测生产 —— 副本数不一致会让"在 test 上没问题"这句话变弱。它没挂任何卷,
-  #    所以将来确认无状态后直接改 2 即可(那时要按本文件其它服务的样子补 max_replicas_per_node
-  #    与 stop-first)。
-  #  * 生产没有给它任何 env_file(prod/env-files.txt 里也没有它),所以这里同样不需要密钥变量。
+  #  * **replicas: 1**,与生产的容器数一致。
+  #  * v2(2026-09)起:数据不再打包进镜像,改为网页上传落盘到持久卷 /app/data。集群里卷是
+  #    节点本地的,所以用 external 命名卷 po-portal-data(见文件末尾 volumes:)并把服务钉在
+  #    建了卷的那台节点(node-100-78-224-45),否则调度到另一台会挂到空卷、表现为"尚未上传数据"。
+  #    因为有卷+钉节点,这个服务不能再随手改成多副本;要多副本得先把数据外置。
+  #  * env_file 注入 UPLOAD_TOKEN(网页上传口令),内容由部署任务从 PO_PORTAL_TEST_ENV 投放。
+  #    详见服务仓 docs/PLATFORM_CI_PATCH.md。
   po-reporting-portal:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/po-reporting-portal:${PO_REPORTING_PORTAL_TAG}
     networks: [inner]
+    env_file:
+      - po-reporting-portal.env
+    volumes:
+      - po-portal-data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
@@ -426,12 +431,13 @@ services:
     deploy:
       replicas: 1
       restart_policy: {condition: any}
-      # 单副本 + 两个可用节点,所以 start-first 能在另一台先起新任务、更新期间不断服务。
-      # (本文件里那些 stop-first 是被 max_replicas_per_node: 1 逼出来的,这里没有那个约束。)
+      placement:
+        # 有持久卷(数据在这台节点的硬盘上),必须钉在建了卷的那台节点。
+        constraints: [node.hostname == node-100-78-224-45]
+      # 单副本 + 钉节点。有卷,更新时用 start-first 会在同一台先起新任务(卷可被同节点新任务挂上)。
       update_config: {order: start-first, failure_action: rollback, monitor: 30s}
       rollback_config: {order: start-first}
       resources:
-        # 报表数据打包在镜像里,自己不算重活;按 psi 那档给。
         limits: {cpus: "1.0", memory: 1G}
         reservations: {memory: 128M}
 
@@ -579,6 +585,13 @@ volumes:
   judge-kiro-share:
     external: true
     name: ai-portal-audit-staging_judge-kiro-share
+  # PO 报表门户的数据卷(current.xlsx + history/)。external + 写死名字,理由同下面 seqdiag:
+  # swarm 默认按项目目录派生卷名,换目录会挂到空卷、表现为"尚未上传数据"。
+  # **要先在钉住的那台节点手工建出来**(卷是节点本地的,服务钉在 node-100-78-224-45):
+  #   ssh node-100-78-224-45 'docker volume create po-portal-data'
+  po-portal-data:
+    external: true
+    name: po-portal-data
   # 时序图判定器的登录态。新服务没有历史包袱,所以名字是干净的 —— 但同样必须 external 且写死:
   # compose 默认按项目目录派生卷名,换目录就会挂到一对空卷上,表现是"未登录"。
   # **这两个卷要先在跑判定器的那台机器上手工建出来** —— 卷是节点本地的,而这个服务钉在
