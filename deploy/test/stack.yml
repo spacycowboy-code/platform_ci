@@ -510,15 +510,22 @@ services:
       # 替换就全丢 —— 2026-09-21 实测过:界面容器从 .66 漂到 .45,data/ 十个子目录全空。
       #
       # 路径约定(2026-09-21 由 Miao 定,以后新服务照这个来,现有服务不动):
-      #   测试  /proj/rp_ait_test/data/<服务名>
-      #   生产  /proj/rp_ait_prod/data/<服务名>
+      #   测试  /proj/rp_ait_test/data/<服务名>/data
+      #   生产  /proj/rp_ait_prod/data/<服务名>/data
       # 两台机器上 /proj 都是 /mnt/disk0(Ceph RBD,1TB)里 proj 子目录的 bind 挂载,所以
       # 数据不占 125G 的系统盘 —— .66 的 / 已经 74% 满,2026-08-18 曾因磁盘满构建失败。
       #
+      # **末尾那一层 data/ 是刻意的**:宿主机侧要和仓库结构长得一样。四个兄弟服务
+      # (rtep-flow-manager / po-reporting-portal / ai-portal-be / genius-ac)是把
+      # <服务名>/ 直接映到 /app/data 的"平"形状,那样 `ls` 出来只有 baseline/ compare/…,
+      # 看不到 data/ 这一层,和仓库对不上 —— 而这个包的 data/ 是仓库里真实存在的一层
+      # (由 8 个 .gitkeep 占位保留),人往里放 baseline / PRG 时按仓库结构找目录最省事。
+      # 代价:与那四个服务的形状不一致,路径里出现两个 data(前一个是平台数据区,后一个是
+      # 仓库里的那一层)。
       # **RBD 不是共享文件系统**:两台各挂自己的镜像(实测 .45 用了 28K、.66 用了 26G,
       # 互相看不见)。所以下面 deploy.placement 那条约束是这个挂载的前提、不是可选项 ——
       # 漂到另一台就是一个空目录,而且不报错、不 unhealthy,只表现为「传的文件又没了」。
-      - /proj/rp_ait_test/data/reqflow-result-check:/app/data
+      - /proj/rp_ait_test/data/reqflow-result-check/data:/app/data
     healthcheck:
       # 只证明进程活着。刻意不探判定器 —— 探它要真跑一次 ACP(几十秒、花配额),而健康检查失败
       # 会让编排换掉容器。判定器登录态失效的表现是每次复核都失败,不是界面 unhealthy。

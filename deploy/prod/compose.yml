@@ -678,9 +678,12 @@ services:
       - /proj/rp_ait_prod/logs/reqflow-result-check:/app/logs
       # 数据:用户上传的两份 Excel、baseline / PRG / 判定规则、以及 full_analysis.jsonl
       # (「谁对」那一栏读它)。不挂出来就在容器可写层里,重建容器即全丢。
-      # 路径与 rtep-flow-manager / po-reporting-portal 同一套约定:
-      #   /proj/rp_ait_prod/data/<服务名>:/app/data
-      - /proj/rp_ait_prod/data/reqflow-result-check:/app/data
+      #
+      # 末尾那一层 data/ 是刻意的:宿主机侧要和仓库结构长得一样(仓库里 data/ 是真实存在的
+      # 一层,由 8 个 .gitkeep 占位保留),人往里放 baseline / PRG 时按仓库结构找目录最省事。
+      # 与 rtep-flow-manager / po-reporting-portal 那种 <服务名>:/app/data 的"平"形状不同,
+      # 代价是路径里出现两个 data —— 前一个是平台数据区,后一个是仓库里的那一层。
+      - /proj/rp_ait_prod/data/reqflow-result-check/data:/app/data
 
   # ReqFlow 核查的判定器。和另外三个判定器(audit-judge / genius-ac-judge,以及集群里的
   # sequence-diagram-judge / fi-analysis-judge)一个都不能共用:

@@ -162,9 +162,19 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 服务要往宿主机落东西(日志、用户上传的文件、SQLite、预跑好的结果)时,路径按这个来:
 
 ```
-测试  /proj/rp_ait_test/data/<服务名>:/app/data      /proj/rp_ait_test/logs/<服务名>:/app/logs
-生产  /proj/rp_ait_prod/data/<服务名>:/app/data      /proj/rp_ait_prod/logs/<服务名>:/app/logs
+测试  /proj/rp_ait_test/data/<服务名>/…:/app/…      /proj/rp_ait_test/logs/<服务名>:/app/logs
+生产  /proj/rp_ait_prod/data/<服务名>/…:/app/…      /proj/rp_ait_prod/logs/<服务名>:/app/logs
 ```
+
+`<服务名>` 下面那一层**按容器里的路径取名**,让宿主机侧和镜像里长得一样。例如
+`reqflow-result-check` 的包在 `/app/data` 下放资料(仓库里 `data/` 是真实存在的一层,由 8 个
+`.gitkeep` 占位保留),所以它挂的是
+`/proj/rp_ait_test/data/reqflow-result-check/data:/app/data` —— 人往里放文件时照仓库结构找
+目录就行,不用在脑子里做一次路径换算。
+
+早先几个服务是"平"形状(`<服务名>:/app/data`,`ls` 出来直接是业务目录、看不到 `data/` 这一层):
+`rtep-flow-manager`、`po-reporting-portal`、`ai-portal-be`、`genius-ac`。**这些不动**,新加的按
+上面来。
 
 2026-09-21 定的,**只约束新加的挂载,现有的不动**(`rtep-flow-manager` / `po-reporting-portal` /
 `ai-portal-be` 等生产那几个本来就是这个形状;测试环境唯一的老先例 `/home/eniuiqr/audit-data/logs`
