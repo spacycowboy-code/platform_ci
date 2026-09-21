@@ -504,6 +504,21 @@ services:
     # 但多一层:包里是 AIR 3284 的真实需求内容。能到达 :9101/reqflow/ 的人既能看这些内容、
     # 也能花模型额度。2026-09-20 由 Miao 明确接受。要收紧得在服务仓加登录,不是改这里。
     env_file: [reqflow-result-check.env]
+    volumes:
+      # 用户上传的两份 Excel(ReqFlow 导出 + 人工清单),以及 baseline / PRG / 判定规则 /
+      # full_analysis.jsonl,全都落在 /app/data 下。不挂出来它们就在容器可写层里,容器一被
+      # 替换就全丢 —— 2026-09-21 实测过:界面容器从 .66 漂到 .45,data/ 十个子目录全空。
+      #
+      # 路径约定(2026-09-21 由 Miao 定,以后新服务照这个来,现有服务不动):
+      #   测试  /proj/rp_ait_test/data/<服务名>
+      #   生产  /proj/rp_ait_prod/data/<服务名>
+      # 两台机器上 /proj 都是 /mnt/disk0(Ceph RBD,1TB)里 proj 子目录的 bind 挂载,所以
+      # 数据不占 125G 的系统盘 —— .66 的 / 已经 74% 满,2026-08-18 曾因磁盘满构建失败。
+      #
+      # **RBD 不是共享文件系统**:两台各挂自己的镜像(实测 .45 用了 28K、.66 用了 26G,
+      # 互相看不见)。所以下面 deploy.placement 那条约束是这个挂载的前提、不是可选项 ——
+      # 漂到另一台就是一个空目录,而且不报错、不 unhealthy,只表现为「传的文件又没了」。
+      - /proj/rp_ait_test/data/reqflow-result-check:/app/data
     healthcheck:
       # 只证明进程活着。刻意不探判定器 —— 探它要真跑一次 ACP(几十秒、花配额),而健康检查失败
       # 会让编排换掉容器。判定器登录态失效的表现是每次复核都失败,不是界面 unhealthy。
@@ -523,7 +538,15 @@ services:
       # 那个副本能调模型,其余全 401,而且表现是随机失败不是全挂。要解开得在服务仓改令牌的存法。
       replicas: 1
       restart_policy: {condition: any}
-      # start-first:单副本 + 界面自己不挂卷,新任务可以先起来,切换时不留空窗。
+      # 钉机器:上面那个 bind 挂载在 node-100-78-224-45 的本地 Ceph 盘上,而 RBD 不是共享
+      # 文件系统。不钉的话 swarm 会把它调度到别的节点(2026-09-21 就漂过一次),挂到一个空
+      # 目录上,用户传的文件凭空消失。判定器钉在同一台(它的登录态也在那台的本地卷里)。
+      placement:
+        constraints:
+          - node.hostname == node-100-78-224-45
+      # start-first:单副本,而它挂的是 bind 目录(可被两个容器同时读写,不像判定器那对
+      # kiro 配置卷必须独占),所以新任务可以先起来,切换时不留空窗。重叠的那几十秒里若正好
+      # 有人上传,文件落在同一个宿主机目录上,不会分叉。
       update_config: {order: start-first, failure_action: rollback, monitor: 40s}
       rollback_config: {order: start-first}
       resources:

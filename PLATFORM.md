@@ -157,6 +157,38 @@ sudo mkdir -p /opt/rp-ai && sudo chown <部署用户> /opt/rp-ai && chmod 750 /o
 
 `/opt` 本身不可写,所以这一步必须先做 —— 否则 apply 的 `mkdir -p` 会失败(撞过)。
 
+### 宿主机上的日志与数据目录:`/proj/rp_ait_<env>/…`
+
+服务要往宿主机落东西(日志、用户上传的文件、SQLite、预跑好的结果)时,路径按这个来:
+
+```
+测试  /proj/rp_ait_test/data/<服务名>:/app/data      /proj/rp_ait_test/logs/<服务名>:/app/logs
+生产  /proj/rp_ait_prod/data/<服务名>:/app/data      /proj/rp_ait_prod/logs/<服务名>:/app/logs
+```
+
+2026-09-21 定的,**只约束新加的挂载,现有的不动**(`rtep-flow-manager` / `po-reporting-portal` /
+`ai-portal-be` 等生产那几个本来就是这个形状;测试环境唯一的老先例 `/home/eniuiqr/audit-data/logs`
+留着别碰 —— 挂在个人 home 下是坏形状,但改它要重新部署,不值得)。
+
+为什么是 `/proj` 而不是 `/mnt/disk0` 或 `/home`:
+
+- **`/proj` 就是 `/mnt/disk0`**。两台机器上它都是 Ceph RBD(`/dev/rbd0`,1 TB)里 `proj`
+  子目录的 bind 挂载,fstab 两行:`/mnt/disk0 /dev/rbd0 ext4 noauto,_netdev,nofail` 加
+  `/proj /mnt/disk0/proj none bind`。用短路径纯粹是为了两个环境的声明长得一样。
+- **不能放系统盘**。`/` 只有 125 G,`100.77.162.66` 的已经用到 74%,2026-08-18 就因为磁盘满
+  导致构建失败、手工清了 12.9 G。数据目录只会长不会缩。
+- 目录要 `chown <部署用户>` 并 `chmod 2775`(setgid,跟 `.66` 上 `/proj/rp_ait_prod/data`
+  一致),这样容器(root)和人(scp)都能写,不必每次 sudo。
+
+**RBD 不是共享文件系统。** 两台各挂自己的镜像、互相看不见(实测同一时刻 `.45` 用了 28 K、
+`.66` 用了 26 G)。所以**在集群里挂 bind mount 就必须同时加放置约束**,否则任务漂到另一个
+节点会挂到一个空目录上 —— 不报错、不 unhealthy,只表现为"用户传的文件不见了"。2026-09-21
+`reqflow-result-check` 的界面容器就自己漂过一次(`.66` → `.45`)。
+
+新机器上 `/proj` 不一定存在(`.45` 原先就没有,那块 1 TB 盘只用了 28 K)。补的办法是照上面那两行
+fstab 建 bind,加 `nofail,x-systemd.requires=/mnt/disk0` 比照抄 `.66` 更稳 —— `/mnt/disk0`
+是 `_netdev`,开机早期还没挂上,没有 `nofail` 的 bind 会让 `local-fs.target` 失败。
+
 ### 哪些服务能多副本(逐个查过,不是按"看起来无状态"猜)
 
 多副本的前提是**这个服务不持有权威状态**。查的结果:
