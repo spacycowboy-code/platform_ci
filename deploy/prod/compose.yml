@@ -676,6 +676,11 @@ services:
     volumes:
       # 日志,与其他服务同一套约定(log_conf.yaml 让 uvicorn 同时写 stdout 和 /app/logs)。
       - /proj/rp_ait_prod/logs/reqflow-result-check:/app/logs
+      # 数据:用户上传的两份 Excel、baseline / PRG / 判定规则、以及 full_analysis.jsonl
+      # (「谁对」那一栏读它)。不挂出来就在容器可写层里,重建容器即全丢。
+      # 路径与 rtep-flow-manager / po-reporting-portal 同一套约定:
+      #   /proj/rp_ait_prod/data/<服务名>:/app/data
+      - /proj/rp_ait_prod/data/reqflow-result-check:/app/data
 
   # ReqFlow 核查的判定器。和另外三个判定器(audit-judge / genius-ac-judge,以及集群里的
   # sequence-diagram-judge / fi-analysis-judge)一个都不能共用:
