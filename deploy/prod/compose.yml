@@ -15,20 +15,44 @@ services:
     env_file:
       - eridoc-client.env
     environment:
-      # 身份来自反代注入的 X-Forwarded-User(前端 nginx 用 portal 的登录态换出来的
-      # signum),而不是本服务自己发的 token。写在这里而不是 env 文件里:这不是密钥,
-      # 而且 compose 的 environment 覆盖 env_file,所以以这一行为准。
+      # 身份来自本服务自己发的 bearer token(webapp/auth.py 的 auth_mode=token):
+      # Authorization: Bearer <token>,常数时间比对,每个 token 映射到一个调用方名字,
+      # 每次请求写一条审计日志。写在这里而不是 env 文件里:这不是密钥,而且 compose 的
+      # environment 覆盖 env_file —— 之前这一行写 proxy,正是它把 env 文件里早已配好的
+      # ERIDOC_WEB_TOKENS 压住、让 token 模式一直没生效。
       #
-      # 这个模式唯一的安全前提是"本服务只能经那个反代访问",所以下面**不发布端口**:
-      # 只有同一 compose 网络里的 frontend 能连 eridoc-client:8000。一旦把端口放出去,
-      # 任何人自带一个 X-Forwarded-User 就能冒充别人读 EriDoc 全库。
-      ERIDOC_WEB_AUTH_MODE: "proxy"
+      # 为什么不再用 proxy:proxy 信任反代注入的 X-Forwarded-User,唯一的安全前提是
+      # "本服务只能经那个反代访问"。下面发布了宿主机端口,这个前提就不成立了 ——
+      # 那时任何人自带一个 X-Forwarded-User 就能冒充别人读 EriDoc 全库。所以
+      # **发布端口与 auth_mode=token 必须同时成立**,只改一个就是一个洞。
+      #
+      # 代价:门户前端那条 /api/eridoc/ 走的是注入 X-Forwarded-User,与 token 模式不兼容。
+      # 现在无影响 —— 那条路由在前端 nginx 里已是显式 404(EriDoc Access 已下线)。
+      # 将来要恢复门户入口,得让那一层改成注入 Authorization 头,而不是改回 proxy。
+      ERIDOC_WEB_AUTH_MODE: "token"
       # 浏览器里的下载要整份过一遍内存(前端拿 blob 存盘,见 rp-ai-portal 的
       # eridoc.service.ts),所以打包上限从默认 2 GiB 收到 50 MB。超限是 413,
       # 前端把 message 与 stats 原样显示,让人去分批下。
       ERIDOC_WEB_ZIP_MAX_BYTES: "52428800"
-    # 不发布端口:唯一入口是 portal 前端的 /api/eridoc/(那里做鉴权)。
-    # 8756 曾经直接对外,靠 auth_mode=token 挡;改成 proxy 后必须收回来。
+    # 对外端口:给 Swagger(/api/docs)和 API 调用方一个不经门户的入口。
+    # 9050 的来历:本文件里已声明的宿主端口是 80、443、8901、9000(审计后端)、
+    # 9001(edge 老入口)、9010(psi)、9020(po-reporting-portal)、9030(拓扑工具)、
+    # 9040(reqflow-result-check)、9201(rtep)、9300(genius-ac)、9401(grafana),
+    # 测试环境另占 9100、9101;9050 是 90x0 序列的下一个空位。
+    # **判据是"文件里声明的" ∪ "机器上在听的",不是只看机器**:第一版这里写了 9040,
+    # 机器上实测确实空闲,但 reqflow-result-check 早已在本文件里声明了它、只是还没上线 ——
+    # 照那个写法上去就是两个服务抢同一个端口。加端口前两份清单都要重算。
+    #
+    # 这个洞有多大,说清楚:本服务用一个持有"Read Access to All Documents"的共享
+    # function ID(ecnrpai)读 EriDoc,所以端口一开,任何拿到 token 的人就能读全库;
+    # 而 EriDoc 自己的审计只记得那个共享 ID —— 本服务的审计日志是唯一还能回答
+    # "谁读了哪份文档"的地方。因此 ERIDOC_WEB_TOKENS 要按调用方一人一个
+    # (它就是 名字:token 的列表),共用一个 token 等于放弃归因。
+    #
+    # /api/docs 与 /api/openapi.json 本身没挂鉴权依赖,所以端口开放后 API 结构对内网
+    # 可见(数据不可见,试调用仍要填 token)。要连结构也藏起来得改 webapp/main.py。
+    ports:
+      - "9050:8000"
     volumes:
       # 审计日志(谁读了哪份文档)写在 /app/data/log/<日期>/,是这个服务存在的理由之一,
       # 必须跨部署保留,所以挂到宿主机而不是留在容器里。
