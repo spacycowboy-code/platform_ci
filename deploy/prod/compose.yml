@@ -623,7 +623,20 @@ services:
       # 老入口。前端已不再对外发布 9001,这个端口现在由本服务持有,只回 302。
       - "9001:9001"
     volumes:
-      - ./edge/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 挂**目录**而不是挂 edge/nginx.conf 这一个文件。理由与下面证书那条完全相同,
+      # 而且是 2026-10-08 实打实踩过一次:部署是 rsync,它不在原文件里改字,而是写一个新
+      # 文件再改名顶上去 —— 新文件是新 inode。挂单个文件时 docker 记住的是 inode 而不是
+      # 路径,所以容器里**永远是旧内容**:`nginx -t` 校验的是旧配置、`nginx -s reload`
+      # 返回成功、而配置一个字没换,并且全程不报错。那次切换以为生效了,是用 `nginx -T`
+      # 配一个带唯一标记的请求才查出来的。
+      #
+      # 挂目录之后 inode 不会变,rsync 换掉里面的文件容器立刻看得见,改配置只要 reload,
+      # 不必重建容器、443 不中断。
+      #
+      # 容器里的文件名随之变成 conf.d/nginx.conf(不再是 default.conf)。这没有影响:
+      # 主配置 include 的是 conf.d/*.conf。而且整个 conf.d 被这个目录盖住,镜像自带的
+      # default.conf 一起消失,不会再有两份监听 80 的 server 块。
+      - ./edge:/etc/nginx/conf.d:ro
       - /proj/rp_ait_prod/certs/rpai:/etc/nginx/certs:ro
     depends_on:
       - frontend
