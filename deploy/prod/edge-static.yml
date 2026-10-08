@@ -1,5 +1,16 @@
 # Traefik 的静态配置(启动时读一次)。
 #
+# 形态:**Traefik 待在 rp-ai-edge 后面**,不是取代它。
+#   浏览器 --443--> rp-ai-edge(TLS、域名、80/9001 的 302)--> traefik(路由)--> 各服务
+# 所以这一层只需要一个明文 HTTP 入口,**不需要 443 entryPoint、不需要证书配置** ——
+# 证书继续由 edge 持有(/proj/rp_ait_prod/certs/rpai)。
+#
+# 为什么不让 Traefik 直接当边缘(即接管 443):那样切换不可分段。443 只能被一个容器持有,
+# 所以没有"两套并行跑、逐条对比、验完再切"这个阶段,而证书、端口、路由三件事要在同一个
+# 窗口里一起交接。待在后面则第一步零风险:traefik 只绑回环端口,线上流量一个请求都不经过它;
+# 验完之后第二步只改 edge/nginx.conf 里那一行 proxy_pass,回退也是那一行。
+# 等哪天要把 443 交给 Traefik,再加 entryPoint 与证书即可 —— 现在这一步是那条路的前半段。
+#
 # 不用 docker/swarm 服务发现:Traefik v3 的 docker 客户端协商到 API 1.24,而 Docker 29 的
 # 最低支持是 1.40,发现器一直报 "client version 1.24 is too old"(DOCKER_API_VERSION 无效,
 # 实测变量在容器里但仍然协商 1.24)。改用文件路由的额外好处是**不需要挂 docker socket**,

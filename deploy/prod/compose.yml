@@ -636,6 +636,39 @@ services:
       retries: 3
       start_period: 10s
 
+  # ---- 路由层(并行验证中,尚未接入流量)----
+  # 目标:把"哪个对外路径去哪个服务"这张表从前端镜像里搬到环境描述里,这样改一条路由
+  # 不必再发一次前端版本。表在 edge-dynamic.yml,逐条照前端那份 nginx.conf.template 复刻。
+  #
+  # 形态是**待在 edge 后面**,不是取代它:
+  #   浏览器 --443--> edge(TLS、域名、302)--> traefik(路由)--> 各服务
+  # 所以它不碰 443、不碰证书、不和谁抢端口。
+  #
+  # 现在只绑回环的 8902,**线上流量一个请求都不经过它** —— 这一步纯粹是为了能在生产上
+  # 把它和现有链路(前端的 8901)逐条对比。对比通过之后,第二步才是把 edge/nginx.conf 里
+  # 那一行 `set $fe frontend:80` 改成 traefik:80,回退也是那一行。
+  #
+  # 本服务不在 services.txt 里:第三方镜像、没有对应构建流水线,部署任务不会重建它 ——
+  # 与 edge 和 grafana 一样,改了配置要手动 docker compose up -d traefik。
+  #
+  # 没有 healthcheck:traefik 的镜像是 FROM scratch(只有二进制,没有 shell、没有 wget),
+  # 唯一的办法是开 ping 端点再用 `traefik healthcheck`。在它还不在流量路径上的阶段,
+  # 这是多一处可能配错的东西而换不到任何东西 —— 判据是从宿主机 curl 8902。
+  # 真要接入流量时再加,那时 ping 端点也该一并开出来。
+  traefik:
+    image: armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/traefik:v3.5
+    container_name: rp-ai-traefik
+    restart: unless-stopped
+    command: ["--configFile=/etc/traefik/static.yml"]
+    ports:
+      # 只绑回环,不对网络开放。与 frontend 的 8901 同一个用法。
+      - "127.0.0.1:8902:80"
+    volumes:
+      # compose 形态下用 bind mount;上集群之后换成 docker config(见 stack.yml)。
+      # watch: true 让 dynamic.yml 热加载,所以改路由不需要重启这个容器。
+      - ./edge-static.yml:/etc/traefik/static.yml:ro
+      - ./edge-dynamic.yml:/etc/traefik/dynamic.yml:ro
+
   # ---- 拓扑配置工具(纯静态单页)----
   # 仓库 rp-ai-miao/rsw/digital-chip-topology-configurator。一个自包含的 index.html
   # (HTML/CSS/JS 全内联、无外部资源),所以没有后端、没有上游、不挂目录、不要密钥,
