@@ -3,9 +3,17 @@
 # 与 compose.yml 的关系:达到目标状态后 compose.yml 不再使用(保留一段时间用于回退),
 # 全部验收通过再删。
 #
-# 有状态的三个服务(db / audit-backend / audit-judge)的数据都在 100.77.162.66 的硬盘上
-# (命名卷 + bind mount),所以用放置约束钉在那台机器。它们**不能**与 compose 版本并行运行:
-# 两个 MySQL 挂同一个数据目录会损坏数据。切换必须"先停 compose 再起集群"。
+# 有状态的两个服务(db / audit-judge)的数据都在 100.77.162.66 的硬盘上(命名卷),所以用
+# 放置约束钉在那台机器。它们**不能**与 compose 版本并行运行:两个 MySQL 挂同一个数据目录会
+# 损坏数据。切换必须"先停 compose 再起集群"。
+#
+# **audit-backend 不在这个清单里**(2026-10-08 更正):它原来被算作"有状态的三个之一",但它
+# 唯一的挂载是一个空的日志 bind mount,已经删掉 —— 现在它没有任何本地状态,可以落在任意一台。
+#
+# 其余无状态服务一律 `max_replicas_per_node: 1` 加 `node.hostname != node-100-77-162-66`:
+# 前者防两个副本挤在同一台,后者让它们不要落在生产那台(那台同时扛着生产的 compose 容器和
+# 十几个别的项目的容器,根盘 76%)。这要求第三个节点是 Active —— 2026-10-08 起
+# node-100-77-161-72 从 Drain 改成 Active 就是为了接这些副本。
 #
 # depends_on 在 swarm 里无效,服务会并行启动。后端起得比 db 早就会崩,靠 restart_policy 重试
 # 拉起来 —— 这是 swarm 的模型:不保证顺序,只保证最终收敛。
@@ -76,6 +84,12 @@ services:
         # 同一台 —— 那台一挂服务就全没了,而界面上仍然显示 2/2,不会报警。审计引擎上就撞见过一次。
         # 它没有挂任何卷,所以两台都能跑,这个约束不会让它调度不上去。
         max_replicas_per_node: 1
+        # 2026-10-08:再加一条"不要落在生产那台"。上面那个约束只保证两个副本不挤在一起,
+        # 而当时只有两个节点是 Active,所以必然有一个副本落在 node-100-77-162-66 —— 那台同时
+        # 扛着生产的 compose 容器和十几个别的项目的容器,根盘已到 76%。
+        # 第三个节点(node-100-77-161-72)在同一天从 Drain 改成 Active 来接这些副本。
+        # 这四个服务都不挂任何卷,所以这条约束不会让它们调度不上去。
+        constraints: [node.hostname != node-100-77-162-66]
       restart_policy: {condition: any}
       # stop-first 是被 max_replicas_per_node 逼出来的:两台各一个副本时,start-first 要先起新任务却
       # 没有地方放,更新会永远卡在 Pending("no suitable node"),而服务显示还是 2/2 —— 所以卡住了也
@@ -112,6 +126,12 @@ services:
         # 一个"——"尽量"就是问题:滚动更新后两个副本可以都落在同一台,那台一挂服务全没,而界面上仍然
         # 显示 2/2、不会报警。它没有挂任何卷,所以这个约束不会让它调度不上去。
         max_replicas_per_node: 1
+        # 2026-10-08:再加一条"不要落在生产那台"。上面那个约束只保证两个副本不挤在一起,
+        # 而当时只有两个节点是 Active,所以必然有一个副本落在 node-100-77-162-66 —— 那台同时
+        # 扛着生产的 compose 容器和十几个别的项目的容器,根盘已到 76%。
+        # 第三个节点(node-100-77-161-72)在同一天从 Drain 改成 Active 来接这些副本。
+        # 这四个服务都不挂任何卷,所以这条约束不会让它们调度不上去。
+        constraints: [node.hostname != node-100-77-162-66]
       restart_policy: {condition: any}
       # stop-first 是被上面那个约束逼出来的:两台各一个副本时,start-first 要先起新任务却没有地方放,
       # 更新会永远卡在 Pending("no suitable node"),而服务仍显示 2/2,卡住了也看不出来。
@@ -154,6 +174,12 @@ services:
         # 代价说清楚:一台下线时第二个副本会一直 pending 调度不上去 —— 这是想要的,剩下那个照常服务,
         # 而挤在一起才是把"两副本"变成一句空话。
         max_replicas_per_node: 1
+        # 2026-10-08:再加一条"不要落在生产那台"。上面那个约束只保证两个副本不挤在一起,
+        # 而当时只有两个节点是 Active,所以必然有一个副本落在 node-100-77-162-66 —— 那台同时
+        # 扛着生产的 compose 容器和十几个别的项目的容器,根盘已到 76%。
+        # 第三个节点(node-100-77-161-72)在同一天从 Drain 改成 Active 来接这些副本。
+        # 这四个服务都不挂任何卷,所以这条约束不会让它们调度不上去。
+        constraints: [node.hostname != node-100-77-162-66]
       restart_policy: {condition: any}
       # stop-first,不是 start-first。两台两副本 + 每台最多一个 = 更新时新任务无处可放:实测第二个
       # 副本卡在 Pending "no suitable node (max replica…)",更新永远完不了。
@@ -187,6 +213,12 @@ services:
       placement:
         # 和 skill-audit 同样的理由:preferences 只是偏好,实测滚动更新后两副本会挤在同一台。
         max_replicas_per_node: 1
+        # 2026-10-08:再加一条"不要落在生产那台"。上面那个约束只保证两个副本不挤在一起,
+        # 而当时只有两个节点是 Active,所以必然有一个副本落在 node-100-77-162-66 —— 那台同时
+        # 扛着生产的 compose 容器和十几个别的项目的容器,根盘已到 76%。
+        # 第三个节点(node-100-77-161-72)在同一天从 Drain 改成 Active 来接这些副本。
+        # 这四个服务都不挂任何卷,所以这条约束不会让它们调度不上去。
+        constraints: [node.hostname != node-100-77-162-66]
       restart_policy: {condition: any}
       # stop-first:两台两副本 + 每台最多一个 = start-first 时新任务无处可放,更新永远 Pending。
       update_config: {order: stop-first, failure_action: rollback, monitor: 30s, parallelism: 1}
@@ -301,11 +333,17 @@ services:
     # 门户读不到它 —— 留着只会让人以为改它有用。删掉它之后 environment 下没有任何一项了,所以
     # environment: 这个键也必须一起删 —— 空的 environment 是合法 YAML,但 compose 会报
     # "must be a mapping",而它是在部署时才报,把所有人的部署都挡住。
-    volumes:
-      # 只剩日志。技能仓的工作副本和推送私钥都去掉了:内容按引用走 GitLab 接口读写,鉴权是一个
-      # 项目访问令牌。少了这两个挂载,这个服务就没有本地状态,可以在任意一台机器上起来 ——
-      # 这才是那次重构的目的。按 sha 的内容缓存在容器本地(/tmp),丢了下次重取,不能挂出来。
-      - /home/eniuiqr/audit-data/logs:/app/logs
+    #
+    # 2026-10-08 起**一个挂载都不剩**。原来还挂着 /home/eniuiqr/audit-data/logs:/app/logs,
+    # 已删,理由是它既无用又有害:
+    #   * 无用 —— 实测那个目录只在它当时所在的那一台(.45)上存在、root 属主、跑了两周**0 个文件**。
+    #     日志实际走容器标准输出(`docker service logs test_audit-backend`),没有任何东西写那里。
+    #   * 有害 —— 宿主机路径不存在时 docker 会就地建一个 root 属主的空目录,所以副本飘到哪台就在
+    #     哪台留一个空壳;而它又没有放置约束,等于一个"看起来钉机器、其实谁也没钉住"的挂载。
+    #     psi 与 skill-audit 的注释里写明了同一条原则("那个路径只在一台机器上,挂了就把副本钉死
+    #     在那台"),这里却一直反着做。
+    # 删掉之后它真的没有本地状态了,可以在任意一台机器上起来 —— 这才是那次重构的目的。
+    # 按 sha 的内容缓存在容器本地(/tmp),丢了下次重取,不能挂出来。
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status == 200 else 1)"]
