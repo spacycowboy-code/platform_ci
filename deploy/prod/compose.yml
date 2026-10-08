@@ -305,8 +305,9 @@ services:
       # 在那之前,至少该给数据源换一个只读、只限门户库的 MySQL 用户,把最坏后果限成"读一个库"。
       #
       #   127.0.0.1     本机排障(与 frontend 的 8901 同一个用法)
-      #   172.17.0.1    docker0 网关,即 extra_hosts 里 host-gateway 解析到的地址。
-      #                 同机其它容器走 host.docker.internal:9401 时用这一条。
+      #   172.17.0.1    docker0 网关。本仓库里已经没有消费者了 —— 前端自 2026-10-08 起
+      #                 按服务名 grafana:3000 访问,不再经过宿主机端口。留着只为临时排障,
+      #                 可以和下一条一起收掉。
       #   100.77.162.66 本机局域网地址。这一条就是上面说的洞,只为验收环境的 swarm 而留。
       #                 逐个写明而不是写 "9401:3000",是为了不额外监听 IPv6 与其它网卡。
       - "127.0.0.1:9401:3000"
@@ -555,10 +556,24 @@ services:
       # 对外的 9001 现在由 edge 持有并只回 302 到域名。
       - "127.0.0.1:8901:80"
     environment:
-      AUDIT_UPSTREAM: "http://host.docker.internal:9000"
-      PSI_UPSTREAM: "http://host.docker.internal:9010"
-      GRAFANA_UPSTREAM: "http://host.docker.internal:9401"
-      # 走 compose 服务名而不是 host.docker.internal:那个服务不再发布宿主机端口,
+      # 五个上游一律走服务名。14 个服务同在默认项目网络里,名字现在就解析得到 ——
+      # 此前这三项绕宿主机端口走一圈(容器 → 宿主机 9000/9010/9401 → 容器),等价但多一跳,
+      # 而且它在集群上是坏的:swarm 不支持 extra_hosts 的 host-gateway,这个名字解析不出来;
+      # 即使解析出来它也只指向"副本所在那台机器"。前端在集群上是多副本一台一个,所以症状是
+      # 一半请求 502、一半正常 —— 这种故障离原因很远,所以提前在单机形态下改掉并验证。
+      #
+      # 2026-10-08 在生产上验过:同镜像同网络起一个只绑回环的一次性容器,只改这三个变量,
+      # 与在跑的容器逐条对比 /、/api/version、/api/health、/api/product-structure/health、
+      # /api/product-structure/vem/、/grafana/、/api/work-connector/health、/api/eridoc/
+      # 八条路径,状态码与响应体 md5 全部相同。psi 那两条是 404 而非 502,说明请求确实到了
+      # psi(代理不通会是 502)。反面探针:把 AUDIT_UPSTREAM 故意写错一个字,nginx 直接
+      # emerg 拒绝加载配置、容器以 1 退出 —— 失败是响亮的,不会半坏着没人发现。
+      #
+      # 9000/9010/9401 三个宿主机端口照旧发布,直连它们的东西不受本改动影响。
+      AUDIT_UPSTREAM: "http://audit-backend:8000"
+      PSI_UPSTREAM: "http://product-structure-information:8000"
+      GRAFANA_UPSTREAM: "http://grafana:3000"
+      # 这两项本来就是服务名:那个服务不再发布宿主机端口,
       # 只在这个 compose 项目的网络里可达 —— 这正是它的鉴权模式所要求的。
       ERIDOC_UPSTREAM: "http://eridoc-client:8000"
       # 同理走服务名。**这一项不能缺**:envsubst 对未定义变量替换成空串,配置里就会出现
@@ -566,8 +581,6 @@ services:
       # 而且 nginx 在加载配置时就解析 proxy_pass 里的主机名,所以 work-connector 容器
       # 必须先于新版 frontend 存在,否则同样起不来。顺序见 work-connector/DEPLOY.md。
       WC_UPSTREAM: "http://work-connector:8000"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     healthcheck:
       # 打 127.0.0.1 而不是 localhost:容器 /etc/hosts 里 localhost 同时解析到 ::1,
       # busybox wget 优先走 IPv6,而 nginx 只监听 0.0.0.0——旧的探测因此一直被拒,
