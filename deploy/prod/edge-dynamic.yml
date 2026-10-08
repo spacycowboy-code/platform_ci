@@ -1,38 +1,67 @@
 # 对外路径 → 服务。这份映射属于环境:四个服务在代码里的前缀都是 /api/,彼此冲突,
 # 只有把它们放在一起的这一层才知道谁挂哪个对外前缀、要不要改写。
 #
+# 这张表是**逐条照着前端镜像里那份 nginx.conf.template 复刻的**(rp-ai-portal-fe 仓库),
+# 因为今天真正在做路由的是那一层。搬过来的目的只有一个:改一条路由不必再发一次前端版本。
+# 所以这里的任何一条与那边不一致,就是 bug —— 下面每条都标了它对应模板里的哪一段。
+#
+# 形态是"Traefik 待在 rp-ai-edge 后面":edge 继续持有 443、证书与 302 跳转,
+# 只把 proxy_pass 的目标从 frontend:80 换成 traefik:80。所以这一层**不碰 TLS**,
+# 收到的已经是解密后的 HTTP。见 edge-static.yml 开头。
+#
 # 迁移期间两种后端并存:
-#   * 已搬进集群的写服务名(如 psi:8000)
+#   * 已搬进集群的写服务名
 #   * 未搬的写老机器的 主机:端口
-# 改完这个文件要给 stack.yml 里 configs 的名字换版本号 —— swarm config 不可变。
+# 现在全部是服务名 —— 生产 14 个服务同在 compose 的默认项目网络里,名字直接解析得到;
+# 上集群之后它们在同一个 overlay 上,写法一个字都不用改。
+# 改完这个文件,若 Traefik 已经以 swarm 形态运行,要给 stack.yml 里 configs 的名字换版本号
+# (swarm config 不可变);compose 形态是 bind mount,改完重启 traefik 即可。
 http:
   routers:
     # 优先级显式给,不依赖"规则越长越优先"这个默认行为
+    # 对应模板 location /api/product-structure/
     psi:
       rule: "PathPrefix(`/api/product-structure/`)"
       priority: 100
       entryPoints: [web]
       middlewares: [psi-strip, psi-add]
       service: psi
-    # EriDoc 取件工具。必须交给前端容器,不能像其它 /api/ 一样落到 audit:
-    # 这条链路的鉴权(auth_request 用 portal 的登录态换出 signum,再注入
-    # X-Forwarded-User)做在前端 nginx 里,绕过它就等于把 EriDoc 全库对内网敞开。
-    # 优先级要高过下面 /api/ 的 50;前缀改写也由那层 nginx 负责,这里不加中间件。
+    # 对应模板 location /api/work-connector/
+    # 这条在之前的版本里**漏了** —— 没有它,/api/work-connector/ 会落到下面 /api/ 那条、
+    # 被当成门户后端的请求。前端那层 nginx 一直有这条,所以漏掉就是行为变了。
+    work-connector:
+      rule: "PathPrefix(`/api/work-connector/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [wc-strip, wc-add]
+      service: work-connector
+    # 对应模板 location /api/eridoc/ —— 那里是 `return 404`。
+    #
+    # EriDoc 取件已停用:它所有读取都走一个共享函数账号,于是任何登录门户的人都能取到那个
+    # 账号能看到的任何文档,而 EriDoc 自己的审计日志说不出是谁取的。
+    # 交给 fe 而不是在这里造一个 404:前端那层已经显式 `return 404`,照原样转过去行为完全一致,
+    # 而且恢复时只需要 revert 前端那一个提交,这里不用跟着改。
+    # 优先级要高过下面 /api/ 的 50,否则会落到门户后端。
     eridoc:
       rule: "PathPrefix(`/api/eridoc/`)"
       priority: 100
       entryPoints: [web]
       service: fe
+    # 对应模板 location /api/ —— 门户后端的全部接口都在 /api/* 下,前缀原样保留。
     audit:
       rule: "PathPrefix(`/api/`)"
       priority: 50
       entryPoints: [web]
       service: audit
+    # 对应模板 location ^~ /grafana/
     grafana:
       rule: "PathPrefix(`/grafana/`)"
       priority: 50
       entryPoints: [web]
       service: grafana
+    # 对应模板 location / 与那条静态资源的 location:
+    # index.html 回退(try_files)、/ 的 no-cache、静态资源的 expires 7d 都在前端容器里,
+    # 所以整个 / 交给它,这些行为自动保留 —— 不要在这一层重新实现缓存头。
     fe:
       rule: "PathPrefix(`/`)"
       priority: 1
@@ -40,7 +69,7 @@ http:
       service: fe
 
   middlewares:
-    # 复刻原来 nginx 的 `proxy_pass ${PSI}/api/`:
+    # 复刻 `proxy_pass ${PSI_UPSTREAM}/api/`:
     # /api/product-structure/vem/x -> psi 的 /api/vem/x(psi 的路由挂在 /api/vem 下)
     psi-strip:
       stripPrefix:
@@ -48,29 +77,41 @@ http:
     psi-add:
       addPrefix:
         prefix: "/api"
+    # 复刻 `proxy_pass ${WC_UPSTREAM}/api/`,同上
+    wc-strip:
+      stripPrefix:
+        prefixes: ["/api/work-connector"]
+    wc-add:
+      addPrefix:
+        prefix: "/api"
 
   services:
     psi:
       loadBalancer:
-        # 已在集群里。分流按 TCP 连接发生而不是按请求:顺序调用复用一条连接会落在同一个副本,
-        # 并发才铺开(swarm VIP + IPVS 的固有行为)。
-        servers: [{url: "http://psi:8000"}]
+        # 一个服务名条目就够:副本之间的分流由 swarm 的 VIP + 内核 IPVS 做,不在这一层。
+        # 注意它是**按 TCP 连接**分流而不是按请求 —— 顺序调用复用一条连接会落在同一个副本,
+        # 并发才铺开。要按请求轮转就得绕过 VIP、在这里列出每个副本的地址,通常不值得。
+        servers: [{url: "http://product-structure-information:8000"}]
+    work-connector:
+      loadBalancer:
+        servers: [{url: "http://work-connector:8000"}]
     audit:
       loadBalancer:
-        servers: [{url: "http://100.77.162.66:9000"}]
+        # 曾经写的是 100.77.162.66:9000(绕宿主机发布端口走一圈)。改成服务名的理由同
+        # compose.yml 里 frontend 那三个上游:那条路在集群上是坏的,而且 9000 这个
+        # 宿主机端口迟早要收掉。
+        servers: [{url: "http://audit-backend:8000"}]
     grafana:
       loadBalancer:
         # 前缀必须保留:grafana 自己的资源链接依赖它,而且它由 GF_SERVER_ROOT_URL 决定
-        # (compose.yml 里现在是 https://rpai.ews.gic.ericsson.se/grafana/)—— 入口切换时
-        # 要同步改那一行。
+        # (compose.yml 里是 https://rpai.ews.gic.ericsson.se/grafana/)—— 入口变更时要同步改。
         #
-        # 这个地址是活的(单机 compose 的 grafana 在这台机器上按局域网地址发布 9401)。
-        # 本层若启用,注意它与 deploy/test/edge-dynamic.yml 指的是同一份 grafana。
-        servers: [{url: "http://100.77.162.66:9401"}]
+        # 曾经写的是 100.77.162.66:9401。那个宿主机端口现在只剩验收环境的 traefik 在用
+        # (deploy/test/edge-dynamic.yml),本层改成服务名之后,收掉它的前提就只剩那一个依赖。
+        servers: [{url: "http://grafana:3000"}]
     fe:
       loadBalancer:
-        # TODO 9001 已不再是前端本身,而是 edge 服务上只回 302 到域名的老入口(见 compose.yml)。
-        # 本层启用后按这个地址转发会形成跳转环。前端在单机 compose 上只发布 127.0.0.1:8901,
-        # 容器里的 Traefik 到不了回环地址,所以正确的目标取决于前端何时搬进集群 ——
-        # 迁移这一步时一并定,不在这里猜。
-        servers: [{url: "http://100.77.162.66:9001"}]
+        # 曾经写的是 100.77.162.66:9001,那是个坑:9001 现在由 edge 持有并只回 302 到域名,
+        # 本层按那个地址转发会形成跳转环(旧文件里标着 TODO)。前端的真实入口是容器内的 80,
+        # 在同一个网络里按服务名直达,既没有跳转环也不经过宿主机端口。
+        servers: [{url: "http://frontend:80"}]
