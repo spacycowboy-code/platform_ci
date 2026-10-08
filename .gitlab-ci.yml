@@ -57,6 +57,26 @@ check-templates:
     # 生产(compose)那条路径同理。它把 deploy.yml 里那段内联 ssh 脚本**原文取出来**渲染再执行,
     # 所以转义错了这里就会红 —— 那段历史上因为转义坏过两次。
     - python3 tools/test_compose_deploy.py
+    # stack.yml 的 swarm 兼容性检查本身也要有测试:闸门最糟的失效方式是看起来在工作却拦不住,
+    # 那比没有闸门更糟 —— 后面写 stack.yml 的人会以为有人替他把过关。
+    - python3 tools/test_check_stack_config.py
+
+# stack.yml 在 swarm 下是不是真能部署。单独一个任务是因为它要 docker 命令,
+# 而上面那个任务跑在 python 镜像上。
+#
+# 为什么这道闸门值得存在:swarm 的 `stack deploy` 是**整栈重渲染** —— 任何一个服务块写坏,
+# 整个栈谁都部不了,不是只有那一个服务失败(单机 compose 的 `up -d <服务>` 只影响它自己)。
+# 所以要在提出改动的那个 MR 上变红,而不是等别人点部署时才炸。
+#
+# `docker stack config` 不需要 daemon(纯客户端渲染,实测过),所以这里不需要 dind ——
+# 本项目的 runner 也不允许 privileged。
+check-stack:
+  stage: check
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  before_script:
+    - apk add --no-cache python3 py3-yaml
+  script:
+    - python3 tools/check_stack_config.py
 
 # 缓存仓只会长,不会缩:kaniko 的 --cache-ttl(默认 336h)过期后只是不再采用,不会删。
 # 这个任务按**最后一次被命中的时间**清理,理由与取舍见 tools/prune_build_cache.py 的开头。
