@@ -636,7 +636,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # ---- 路由层(并行验证中,尚未接入流量)----
+  # ---- 路由层 ----
   # 目标:把"哪个对外路径去哪个服务"这张表从前端镜像里搬到环境描述里,这样改一条路由
   # 不必再发一次前端版本。表在 edge-dynamic.yml,逐条照前端那份 nginx.conf.template 复刻。
   #
@@ -644,30 +644,38 @@ services:
   #   浏览器 --443--> edge(TLS、域名、302)--> traefik(路由)--> 各服务
   # 所以它不碰 443、不碰证书、不和谁抢端口。
   #
-  # 现在只绑回环的 8902,**线上流量一个请求都不经过它** —— 这一步纯粹是为了能在生产上
-  # 把它和现有链路(前端的 8901)逐条对比。对比通过之后,第二步才是把 edge/nginx.conf 里
-  # 那一行 `set $fe frontend:80` 改成 traefik:80,回退也是那一行。
+  # 2026-10-08 分两步上线:先只绑回环 8902、在生产上与当时仍在服务的前端路由(8901)逐条
+  # 对比 10 条路径(状态码与响应体 md5 全等、缓存头一致、traefik 访问日志里 6 个 router
+  # 落点全对),通过之后才把 edge/nginx.conf 里 `set $fe` 从 frontend:80 改成 traefik:80。
+  # 回退就是把那一行改回去并 reload edge(配置是 bind mount,reload 无需重建容器)。
+  #
+  # 8902 这个回环端口保留:它是"绕过 edge 单独测路由层"的入口,与 frontend 的 8901、
+  # grafana 的 127.0.0.1:9401 同一个用法 —— 出问题时能一刀切开是 edge 还是路由层。
   #
   # 本服务不在 services.txt 里:第三方镜像、没有对应构建流水线,部署任务不会重建它 ——
   # 与 edge 和 grafana 一样,改了配置要手动 docker compose up -d traefik。
-  #
-  # 没有 healthcheck:traefik 的镜像是 FROM scratch(只有二进制,没有 shell、没有 wget),
-  # 唯一的办法是开 ping 端点再用 `traefik healthcheck`。在它还不在流量路径上的阶段,
-  # 这是多一处可能配错的东西而换不到任何东西 —— 判据是从宿主机 curl 8902。
-  # 真要接入流量时再加,那时 ping 端点也该一并开出来。
+  # 注意 dynamic.yml 是 watch: true 热加载的,**只改路由不需要重启**;改 static.yml 才要。
   traefik:
     image: armdocker.rnd.ericsson.se/dockerhub-ericsson-remote/traefik:v3.5
     container_name: rp-ai-traefik
     restart: unless-stopped
     command: ["--configFile=/etc/traefik/static.yml"]
     ports:
-      # 只绑回环,不对网络开放。与 frontend 的 8901 同一个用法。
+      # 只绑回环,不对网络开放。对外流量由 edge 在 443 收下后转进来。
       - "127.0.0.1:8902:80"
     volumes:
       # compose 形态下用 bind mount;上集群之后换成 docker config(见 stack.yml)。
-      # watch: true 让 dynamic.yml 热加载,所以改路由不需要重启这个容器。
       - ./edge-static.yml:/etc/traefik/static.yml:ro
       - ./edge-dynamic.yml:/etc/traefik/dynamic.yml:ro
+    healthcheck:
+      # 这个镜像是 FROM scratch(没有 shell、没有 wget),所以唯一可用的探测方式是 traefik
+      # 自己的子命令,它要求 static.yml 里开着 ping 端点。2026-10-08 用一次性容器验过:
+      # 返回 "OK: http://:8080/ping"、退出码 0。
+      test: ["CMD", "traefik", "healthcheck", "--configFile=/etc/traefik/static.yml"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # ---- 拓扑配置工具(纯静态单页)----
   # 仓库 rp-ai-miao/rsw/digital-chip-topology-configurator。一个自包含的 index.html

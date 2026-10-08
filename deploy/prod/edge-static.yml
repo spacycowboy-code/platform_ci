@@ -21,10 +21,28 @@
 entryPoints:
   web:
     address: ":80"
+    transport:
+      # 显式给,不依赖默认值:本层现在在流量路径上,而 edge 那边是 proxy_read_timeout /
+      # proxy_send_timeout 1800s。审计与判定器那类请求可以跑很久且中间长时间没有输出,
+      # 这一层比 edge 更严就会在"看起来一切正常"的情况下把长请求掐断。
+      respondingTimeouts:
+        readTimeout: 1800s
+        writeTimeout: 1800s
+        idleTimeout: 1800s
 providers:
   file:
     filename: /etc/traefik/dynamic.yml
     watch: true
+# 本层进入流量路径之后才开:给 docker 的 healthcheck 一个判据。
+# traefik 的镜像是 FROM scratch(没有 shell、没有 wget),唯一能用的探测方式是它自己的
+# `traefik healthcheck` 子命令,而那个子命令要求这个端点开着。
+ping: {}
+# 到后端那一侧同理:默认的 responseHeaderTimeout 不一定是"无限制",而后端第一个响应头
+# 可能要等很久才出来。dialTimeout 保持较短 —— 连不上应该快速失败,而不是让用户等。
+serversTransport:
+  forwardingTimeouts:
+    dialTimeout: 30s
+    responseHeaderTimeout: 1800s
 log:
   level: INFO
 accessLog: {}
