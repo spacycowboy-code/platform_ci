@@ -24,6 +24,20 @@ x-pin-to-old: &pin
   # 数据在这台机器的硬盘上,副本调度到别处就找不到数据
   constraints: [node.hostname == node-100-77-162-66]
 
+# 2026-10-09:给**所有**没有本地状态的服务用。它和 &pin 是一对:要么数据真在 .66 上(用 &pin),
+# 要么就别落在 .66(用这个)。不写约束不是中立选项 —— swarm 每次重建都重新挑机器,挑到哪台
+# 全凭当时的负载,所以"没写"等于"随机漂",而且漂回生产那台时界面上一切正常、没人会发现。
+#
+# 为什么不许落在 node-100-77-162-66:那台同时扛着生产的 12 个 compose 容器和十几个别的项目的
+# 容器,根盘 77%(docker 自己就占了约 79G:镜像 38.55G + 本地构建缓存 23.15G + 命名卷 16.52G),
+# 而且**没有任何清理机制**。test 的东西没有理由去挤它。
+#
+# 这不影响对外地址:入口端口是 ingress 模式,swarm 在每个节点都监听,谁收到请求就在集群内部
+# 转给真正跑着任务的那台。实测 topology 的容器在 .45,而 http://100.77.162.66:9101/topology/
+# 照样 200 —— .66 上监听 9101 的是 dockerd 本身,不是容器。
+x-avoid-prod-node: &avoid-prod
+  constraints: [node.hostname != node-100-77-162-66]
+
 services:
   # ---------- 入口 ----------
   traefik:
@@ -46,6 +60,7 @@ services:
       # 不再限制在 manager:那个约束当初是为了读 docker socket 才加的,改用文件路由后
       # 已不需要,而钉在唯一 manager 上会让 manager 故障直接带走整个入口。
       # ingress 模式下入口端口在所有节点都监听,所以 Traefik 落在哪台都能对外服务。
+      placement: *avoid-prod
       restart_policy:
         condition: any
       update_config:
@@ -265,6 +280,7 @@ services:
     deploy:
       # 见上面:单副本是这个服务的约束,不是保守取值。
       replicas: 1
+      placement: *avoid-prod
       restart_policy: {condition: any}
       # start-first:单副本 + 无卷,新任务可以先起来,切换时不留空窗。
       update_config: {order: start-first, failure_action: rollback, monitor: 40s}
@@ -283,6 +299,7 @@ services:
     deploy:
       # 无状态,但只需要一个:它是周期性对账,多副本只会重复做同一件事
       replicas: 1
+      placement: *avoid-prod
       restart_policy: {condition: any}
       resources:
         limits: {cpus: "0.5", memory: 512M}
@@ -354,9 +371,13 @@ services:
     deploy:
       replicas: 1
       # 不再钉机器。原来钉在 node-100-77-162-66 上是因为技能仓的工作副本和推送私钥都在那台
-      # 机器的硬盘上;内容改成按引用走 GitLab 接口读写、两个挂载去掉之后,这个服务没有本地
-      # 状态了(只剩日志挂载,而日志本来就是每个副本各自的)。db 与 audit-judge 仍然要钉:
-      # MySQL 的数据目录和判定器的登录态确实在那台机器上。
+      # 机器的硬盘上;内容改成按引用走 GitLab 接口读写之后,那两个挂载去掉了。2026-10-08 又把
+      # 最后那个(空的)日志挂载也删了,所以现在它**一个挂载都没有**、没有任何本地状态。
+      # db 与 audit-judge 仍然要钉:MySQL 的数据目录和判定器的登录态确实在那台机器上。
+      #
+      # 2026-10-09 补上 *avoid-prod:没有状态不等于"随便放"。此前它没有任何约束,结果在
+      # 10-08 那次滚动更新里自己从 .45 漂到了 .72 —— 这次漂对了,但下次完全可以漂回 .66。
+      placement: *avoid-prod
       restart_policy: {condition: any}
       # 没有本地状态,新旧副本可以并存,滚动时不必先断服务
       update_config: {order: start-first}
@@ -505,6 +526,7 @@ services:
       start_period: 10s
     deploy:
       replicas: 1
+      placement: *avoid-prod
       restart_policy: {condition: any}
       # 单副本 + 两个可用节点,所以 start-first 能在另一台先起新任务、更新期间不断服务。
       update_config: {order: start-first, failure_action: rollback, monitor: 30s}
