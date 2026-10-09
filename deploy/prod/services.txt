@@ -13,9 +13,7 @@ rtep-flow-manager: compose rtep-flow-manager
 rp-ai-portal-be: compose audit-backend audit-reconciler
 skill-audit-judge: compose audit-judge
 rp-ai-portal-fe: compose frontend
-eridoc-client: compose eridoc-client
 skill-audit: compose skill-audit
-work-connector: compose work-connector
 genius-ac: compose genius-ac
 genius-ac-judge: compose genius-ac-judge
 po-reporting-portal: compose po-reporting-portal
