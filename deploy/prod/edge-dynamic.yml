@@ -26,15 +26,20 @@ http:
       entryPoints: [web]
       middlewares: [psi-strip, psi-add]
       service: psi
-    # 对应模板 location /api/work-connector/
-    # 这条在之前的版本里**漏了** —— 没有它,/api/work-connector/ 会落到下面 /api/ 那条、
-    # 被当成门户后端的请求。前端那层 nginx 一直有这条,所以漏掉就是行为变了。
-    work-connector:
-      rule: "PathPrefix(`/api/work-connector/`)"
-      priority: 100
-      entryPoints: [web]
-      middlewares: [wc-strip, wc-add]
-      service: work-connector
+    # /api/work-connector/ 那条路由已于 2026-10-09 删除(Work Connector 下线:七天日志里
+    # 一次真实调用都没有,20085 次请求全部是容器自己的健康检查)。
+    #
+    # **没有在这里留一条 return 404 的挡板,和下面 /api/eridoc/ 的做法不同** —— 因为两者
+    # 在这一层的落点本来就不一样:eridoc 那条指向 fe(前端容器里那层 nginx 自己返回 404),
+    # 所以它必须留着;work-connector 这条原来直连服务,服务已经从环境描述里移除,留着只会
+    # 是一条指向空处的规则。删掉之后这个路径落到下面的 audit(PathPrefix `/api/`,
+    # priority 50),由门户后端答 404 —— 对一个已下线的工具来说这是正确答案。
+    #
+    # 一条值得记下来的结论:**前端那层的 404 对域名流量不生效。** 生产的链路是
+    # edge -> traefik -> 服务,而这一层原来直接把 /api/work-connector/ 转给服务,根本不
+    # 经过前端容器。所以前端那个 MR(rp-ai-portal-fe !104)关掉的是界面入口与 dev 代理,
+    # 真正关掉接口的是本次改动 —— 前端仓写的「三层一起关」,在生产其实是四层,
+    # 边缘路由表是第四层,而且是唯一真正挡住域名流量的那一层。
     # 对应模板 location /api/eridoc/ —— 那里是 `return 404`。
     #
     # EriDoc 取件已停用:它所有读取都走一个共享函数账号,于是任何登录门户的人都能取到那个
@@ -106,13 +111,6 @@ http:
     psi-add:
       addPrefix:
         prefix: "/api"
-    # 复刻 `proxy_pass ${WC_UPSTREAM}/api/`,同上
-    wc-strip:
-      stripPrefix:
-        prefixes: ["/api/work-connector"]
-    wc-add:
-      addPrefix:
-        prefix: "/api"
     # PO 报表看板:整个前缀都剥掉,应用在容器里仍然认为自己挂在根上。
     # 注意 prefixes 不带尾斜杠(traefik 的 stripPrefix 约定),而上面的 rule 带 ——
     # rule 带斜杠是为了不误匹配 /pmo/dashboard/hwcxxx 这类前缀相同的路径。
@@ -142,9 +140,6 @@ http:
         # 注意它是**按 TCP 连接**分流而不是按请求 —— 顺序调用复用一条连接会落在同一个副本,
         # 并发才铺开。要按请求轮转就得绕过 VIP、在这里列出每个副本的地址,通常不值得。
         servers: [{url: "http://product-structure-information:8000"}]
-    work-connector:
-      loadBalancer:
-        servers: [{url: "http://work-connector:8000"}]
     po:
       loadBalancer:
         # 服务名直达,不走宿主机的 9020。实测 traefik 与 po-reporting-portal 同在

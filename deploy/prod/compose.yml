@@ -8,64 +8,6 @@
 # 密钥不在这里:product-structure-information.env 由部署任务从 CI 的 File 变量
 # PSI_PROD_ENV 投放到本目录。
 services:
-  eridoc-client:
-    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/eridoc-client:${ERIDOC_CLIENT_TAG:-not-deployed}
-    container_name: eridoc-client
-    restart: unless-stopped
-    env_file:
-      - eridoc-client.env
-    environment:
-      # 身份来自本服务自己发的 bearer token(webapp/auth.py 的 auth_mode=token):
-      # Authorization: Bearer <token>,常数时间比对,每个 token 映射到一个调用方名字,
-      # 每次请求写一条审计日志。写在这里而不是 env 文件里:这不是密钥,而且 compose 的
-      # environment 覆盖 env_file —— 之前这一行写 proxy,正是它把 env 文件里早已配好的
-      # ERIDOC_WEB_TOKENS 压住、让 token 模式一直没生效。
-      #
-      # 为什么不再用 proxy:proxy 信任反代注入的 X-Forwarded-User,唯一的安全前提是
-      # "本服务只能经那个反代访问"。下面发布了宿主机端口,这个前提就不成立了 ——
-      # 那时任何人自带一个 X-Forwarded-User 就能冒充别人读 EriDoc 全库。所以
-      # **发布端口与 auth_mode=token 必须同时成立**,只改一个就是一个洞。
-      #
-      # 代价:门户前端那条 /api/eridoc/ 走的是注入 X-Forwarded-User,与 token 模式不兼容。
-      # 现在无影响 —— 那条路由在前端 nginx 里已是显式 404(EriDoc Access 已下线)。
-      # 将来要恢复门户入口,得让那一层改成注入 Authorization 头,而不是改回 proxy。
-      ERIDOC_WEB_AUTH_MODE: "token"
-      # 浏览器里的下载要整份过一遍内存(前端拿 blob 存盘,见 rp-ai-portal 的
-      # eridoc.service.ts),所以打包上限从默认 2 GiB 收到 50 MB。超限是 413,
-      # 前端把 message 与 stats 原样显示,让人去分批下。
-      ERIDOC_WEB_ZIP_MAX_BYTES: "52428800"
-    # 对外端口:给 Swagger(/api/docs)和 API 调用方一个不经门户的入口。
-    # 9050 的来历:本文件里已声明的宿主端口是 80、443、8901、9000(审计后端)、
-    # 9001(edge 老入口)、9010(psi)、9020(po-reporting-portal)、9030(拓扑工具)、
-    # 9040(reqflow-result-check)、9201(rtep)、9300(genius-ac)、9401(grafana),
-    # 测试环境另占 9100、9101;9050 是 90x0 序列的下一个空位。
-    # **判据是"文件里声明的" ∪ "机器上在听的",不是只看机器**:第一版这里写了 9040,
-    # 机器上实测确实空闲,但 reqflow-result-check 早已在本文件里声明了它、只是还没上线 ——
-    # 照那个写法上去就是两个服务抢同一个端口。加端口前两份清单都要重算。
-    #
-    # 这个洞有多大,说清楚:本服务用一个持有"Read Access to All Documents"的共享
-    # function ID(ecnrpai)读 EriDoc,所以端口一开,任何拿到 token 的人就能读全库;
-    # 而 EriDoc 自己的审计只记得那个共享 ID —— 本服务的审计日志是唯一还能回答
-    # "谁读了哪份文档"的地方。因此 ERIDOC_WEB_TOKENS 要按调用方一人一个
-    # (它就是 名字:token 的列表),共用一个 token 等于放弃归因。
-    #
-    # /api/docs 与 /api/openapi.json 本身没挂鉴权依赖,所以端口开放后 API 结构对内网
-    # 可见(数据不可见,试调用仍要填 token)。要连结构也藏起来得改 webapp/main.py。
-    ports:
-      - "9050:8000"
-    volumes:
-      # 审计日志(谁读了哪份文档)写在 /app/data/log/<日期>/,是这个服务存在的理由之一,
-      # 必须跨部署保留,所以挂到宿主机而不是留在容器里。
-      - /proj/rp_ait_prod/logs/eridoc-client:/app/data
-    healthcheck:
-      # 本服务的免鉴权健康端点是 /api/health,不是其它服务的 /health。
-      test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status == 200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
   product-structure-information:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/product-structure-information:${PRODUCT_STRUCTURE_INFORMATION_TAG:-925f24b0}
     container_name: product-structure-information
@@ -110,7 +52,6 @@ services:
       ports:
         - "9020:8000"
       volumes:
-        - /proj/rp_ait_prod/logs/po-reporting-portal:/app/logs
         - /proj/rp_ait_prod/data/po-reporting-portal:/app/data
       env_file:
         - po-reporting-portal.env
@@ -521,30 +462,6 @@ services:
 
   # ---- 前端 ----
   # 与 staging 跑同一个镜像 digest,区别只在下面三个上游地址。
-  work-connector:
-    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/work-connector:${WORK_CONNECTOR_TAG:-not-deployed}
-    container_name: work-connector
-    restart: unless-stopped
-    environment:
-      # 展示时区。后端用它决定"今天"从几点开始 —— 容器是 UTC,不设的话"今天"会从
-      # 北京时间早上 8 点算起。
-      WC_TZ: "Asia/Shanghai"
-      # 生产界面在门户里,同源,不需要 CORS。留空即关掉。
-      WC_CORS_ORIGINS: ""
-    # **不发布端口,也不 expose。** 与 eridoc-client 是同一个结论但不同的理由:
-    # eridoc-client 通过一个共用服务账号读取,未认证到达就等于发放本人无权看的文档;
-    # 这个服务不持有任何凭据,每个调用自带调用者本人的 Graph token 并严格以那个人的身份
-    # 行事,所以未认证的人拿不到他本来没有的东西 —— 没有可提升的权限。
-    # 真正的理由是:一个可达的端口会让这台机器变成任何人都能用的 graph.microsoft.com 中继。
-    healthcheck:
-      # /api/health 不需要 token,正是为此存在。容器内监听 8000(基础镜像的 APP_PORT)。
-      test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status == 200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
   frontend:
     image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/rp-ai-portal-fe:${RP_AI_PORTAL_FE_TAG:-63acaea6}
     container_name: rp-ai-portal-fe
@@ -716,101 +633,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # ---- ReqFlow 结果核查:界面 + 判定器 ----
-  # 一个仓构建两个镜像(rp-ai-miao/ps/reqflow-result-check)。核查本身**不需要模型** ——
-  # 三步对比、少选分诊、来源定位、HTML 报告全是算出来的;需要模型的只有「逐条复核谁对」这一件
-  # 事。所以判定器不可用时界面照常可用,只少「谁对」那一栏(服务仓 checker/llm_results.py 的
-  # 读取纪律把这件事写成了测试)。
-  reqflow-result-check:
-    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/reqflow-result-check:${REQFLOW_RESULT_CHECK_TAG:-not-deployed}
-    container_name: reqflow-result-check
-    restart: unless-stopped
-    ports:
-      # 9040 是按现有规律取的下一个十位(9000 audit-backend / 9010 psi / 9020 po /
-      # 9030 topology)。生产的 edge 是 nginx 而不是 Traefik,走路径前缀要改 nginx 配置,
-      # 所以这里和其他几个服务一样直接给端口。测试环境那侧不占端口,走 :9101/reqflow/。
-      #
-      # **这个口子没有鉴权。** 和 genius-ac 的 9300 是同一类明知的取舍,但多一层:包里是
-      # AIR 3284 的真实需求内容 —— 能到达 9040 的人既能看这些内容,也能花模型额度
-      # (界面会把请求转给判定器,而判定器持有 kiro-cli 的登录态)。2026-09-20 由 Miao 明确
-      # 接受。要收紧得在服务仓加登录,不是改这里。
-      - "9040:8000"
-    # reqflow-result-check.env(File 型 CI 变量 REQFLOW_RESULT_CHECK_PROD_ENV)里的键 ——
-    # 那份文件不在 git 里,键的存在在这个仓库中完全不可见,所以按 PLATFORM.md 的约定列在这里:
-    #   REQFLOW_OPENAI_ENDPOINT_URL   指向判定器,写全路径:
-    #                                 http://reqflow-result-check-judge:8790/v1/chat/completions
-    #                                 服务仓 reqflow/llm_client.py 里这个变量是**整体覆盖**端点,
-    #                                 所以不受它那条写死的 azure 路径影响
-    #   REQFLOW_AUTH_TOKEN            界面调判定器时带的令牌,必须与判定器的
-    #                                 REQFLOW_JUDGE_TOKEN 同值,否则每次复核 401
-    #   REQFLOW_JUDGE_TOKEN           判定器侧校验的那一串(同上)
-    #   REQFLOW_JUDGE_KIRO_MODEL      判定器用哪个模型。**钉死,不要 auto** —— 核查报告的可信度
-    #                                 建立在「这批结论是哪个模型给的」上,auto 换了没人看得出来。
-    #                                 这里用 claude-opus-5 而非另外三个判定器的 sonnet:
-    #                                 这个判定器裁决的是「另一个大模型判错了还是人判错了」
-    env_file:
-      - reqflow-result-check.env
-    healthcheck:
-      # 用 127.0.0.1 而不是 localhost:localhost 会走 ::1,而这个服务(Flask 经 a2wsgi 由
-      # uvicorn 起)只监听 IPv4,现象是「容器 unhealthy 但服务能访问」—— README 的排错表里
-      # 专门列了这一条。
-      #
-      # 刻意不探判定器:探它要真跑一次 ACP(几十秒、花配额),而健康检查失败会让 compose 重建
-      # 容器。判定器登录态失效的表现是每次复核都失败,不是界面 unhealthy。
-      test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      # 启动时要 import openpyxl 那条链,冷启动慢一截。
-      start_period: 40s
-    volumes:
-      # 日志,与其他服务同一套约定(log_conf.yaml 让 uvicorn 同时写 stdout 和 /app/logs)。
-      - /proj/rp_ait_prod/logs/reqflow-result-check:/app/logs
-      # 数据:用户上传的两份 Excel、baseline / PRG / 判定规则、以及 full_analysis.jsonl
-      # (「谁对」那一栏读它)。不挂出来就在容器可写层里,重建容器即全丢。
-      #
-      # 末尾那一层 data/ 是刻意的:宿主机侧要和仓库结构长得一样(仓库里 data/ 是真实存在的
-      # 一层,由 8 个 .gitkeep 占位保留),人往里放 baseline / PRG 时按仓库结构找目录最省事。
-      # 与 rtep-flow-manager / po-reporting-portal 那种 <服务名>:/app/data 的"平"形状不同,
-      # 代价是路径里出现两个 data —— 前一个是平台数据区,后一个是仓库里的那一层。
-      - /proj/rp_ait_prod/data/reqflow-result-check/data:/app/data
-
-  # ReqFlow 核查的判定器。和另外三个判定器(audit-judge / genius-ac-judge,以及集群里的
-  # sequence-diagram-judge / fi-analysis-judge)一个都不能共用:
-  #   · 卷独占 —— 同一个 kiro-cli 配置目录被两个容器同时写会互相踩;
-  #   · 端点 agent 不同 —— 这个要求回一个 JSON **对象**(与 audit-judge 同类),
-  #     fi 那个要 JSON 数组、seqdiag 那个要 PlantUML。喂错了两次尝试全白跑。
-  reqflow-result-check-judge:
-    image: armdocker.rnd.ericsson.se/proj-rp-ps-ai/reqflow-result-check-judge:${REQFLOW_RESULT_CHECK_JUDGE_TAG:-not-deployed}
-    container_name: reqflow-result-check-judge
-    restart: unless-stopped
-    # 与界面同一个 env 文件:REQFLOW_JUDGE_TOKEN 必须等于界面带的那个令牌,分成两个文件就等于
-    # 给"两边不一致"留了位置,而它的表现是每次复核都 401。
-    env_file:
-      - reqflow-result-check.env
-    # 不发布端口。它是一个模型访问入口,能到达就能花额度、跑任意 prompt。
-    # 界面在同一个 compose 网络里按服务名访问它(reqflow-result-check-judge:8790)。
-    expose:
-      - "8790"
-    healthcheck:
-      # 判定器降级(未登录、模型不可用)在业务上只表现为"复核那一栏一直空着",
-      # 真正的原因在它自己的输出里 —— 所以要有容器层面的可见性。
-      # 注意它**不检查登录态**(那要真跑一次 ACP):healthy 不等于能出结论。
-      test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8790/health').status == 200 else 1)"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    volumes:
-      # kiro-cli 的 SSO 登录态。不在任何备份里;丢了就要手动再 kiro-cli login 一次。
-      - reqflow-kiro-home:/root/.kiro
-      - reqflow-kiro-share:/root/.local/share/kiro-cli
-      # 日志。判定器的日志比界面更该留:"未登录"这个故障在业务上只表现为"复核那一栏空着",
-      # 真正的原因写在它自己的输出里。
-      - /proj/rp_ait_prod/logs/reqflow-result-check-judge:/app/logs
-
 volumes:
   # 声明为外部卷:这些数据先于本描述存在,compose 不该按项目名新建一套。
   judge-kiro-home:
@@ -837,14 +659,3 @@ volumes:
   genius-ac-data:
     external: true
     name: genius-ac_data
-  # ReqFlow 核查判定器的 SSO 登录态。同样 external + 名字写死,理由同上:派生名跟着 compose
-  # 项目目录走,换一次目录就挂到一对空卷上,表现为"未登录",而那离真实原因很远。
-  # 首次部署前在主机上建一次:
-  #   docker volume create reqflow-result-check_judge-kiro-home
-  #   docker volume create reqflow-result-check_judge-kiro-share
-  reqflow-kiro-home:
-    external: true
-    name: reqflow-result-check_judge-kiro-home
-  reqflow-kiro-share:
-    external: true
-    name: reqflow-result-check_judge-kiro-share
