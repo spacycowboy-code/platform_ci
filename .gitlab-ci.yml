@@ -223,8 +223,19 @@ deploy-grafana-config:
 # 重启判据分三档,因为三种配置的生效方式完全不同:
 #   * edge-dynamic.yml(路由表)  → traefik 热加载,**什么都不用做**
 #   * edge-static.yml(入口、超时) → traefik 启动时只读一次,必须重建 traefik
-#   * compose.yml / edge/ 下的 nginx 配置 → 挂载点或端口可能变了,必须重建对应容器
+#   * compose.yml 里 **edge 或 traefik 自己那一段** → 挂载点或端口可能变了,重建对应容器
+#   * edge/ 下的 nginx 配置 → 挂的是目录,nginx -t 然后 reload,不中断连接
 # 三档分开的意义是:改路由这种最常见的操作完全不碰容器,而 443 那个容器只在真有必要时才动。
+#
+# **compose.yml 的判据是"只比 edge 与 traefik 那两段",不是比整个文件。** 第一版比的是
+# 整个文件,结果任何一处 compose 改动都会重启整站入口 —— 2026-10-09 下线 work-connector
+# 与 eridoc-client 那次就撞上了:删掉的 83 行全在那两个服务块里,edge 与 traefik 的定义
+# 一个字都没动(两段的哈希前后相同),但整个文件的哈希变了,于是按钮判定要重建 443 那个
+# 容器,凭空收一次几秒全站中断的税。而且这个税会在未来每一次不相关的 compose 改动上重复收。
+#
+# 推论要说清:**别的服务改了 compose 不会由本 job 生效**,它们各自的部署按钮会 rsync 整个
+# 环境描述并重建自己那个容器。本 job 仍然把整个 compose.yml 送上去(机器上那份要是权威的),
+# 只是不拿它当重启入口的理由。
 deploy-edge-config:
   stage: deploy
   image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
@@ -295,7 +306,12 @@ deploy-edge-config:
 
       # ---------- 3. 记下改之前的状态 ----------
       HASH() { $SSH "$DEPLOY_USER@$DEPLOY_HOST" "md5sum $HOST_DIR/$1 2>/dev/null | cut -d' ' -f1"; }
-      B_DYN=$(HASH edge-dynamic.yml); B_STATIC=$(HASH edge-static.yml); B_COMPOSE=$(HASH compose.yml)
+      # 只取 compose.yml 里某一个服务块。停止条件是"下一个 0 缩进或 2 缩进的行" ——
+      # 2 缩进的既包括兄弟服务键,也包括服务之间那种分节注释(`  # ---- 前端 ----`),
+      # 所以不会把下一个服务的注释算进来。块内的注释缩进都 >= 4 空格,不受影响。
+      BLOCK() { $SSH "$DEPLOY_USER@$DEPLOY_HOST" "awk -v key='  $1:' '\\$0==key{inb=1; print; next} inb && (/^[^ ]/ || /^  [^ ]/){inb=0} inb{print}' $HOST_DIR/compose.yml 2>/dev/null | md5sum | cut -d' ' -f1"; }
+      B_DYN=$(HASH edge-dynamic.yml); B_STATIC=$(HASH edge-static.yml)
+      B_EDGE=$(BLOCK edge); B_TRAEFIK=$(BLOCK traefik)
       B_NGINX=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/edge/*.conf 2>/dev/null | md5sum | cut -d' ' -f1")
 
       # 改之前的基线:状态码 + 响应体 md5。改完逐条对比,任何一条不一样就让 job 红。
@@ -312,12 +328,14 @@ deploy-edge-config:
       rsync --inplace -rlt --delete -e "$SSH" --itemize-changes "$SRC/edge/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/edge/"
 
       # ---------- 5. 按改了什么决定做什么 ----------
-      A_DYN=$(HASH edge-dynamic.yml); A_STATIC=$(HASH edge-static.yml); A_COMPOSE=$(HASH compose.yml)
+      A_DYN=$(HASH edge-dynamic.yml); A_STATIC=$(HASH edge-static.yml)
+      A_EDGE=$(BLOCK edge); A_TRAEFIK=$(BLOCK traefik)
       A_NGINX=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/edge/*.conf 2>/dev/null | md5sum | cut -d' ' -f1")
       RECREATE=""
       [ "$B_STATIC"  != "$A_STATIC" ]  && { echo "edge-static.yml 变了 → traefik 启动时才读,要重建"; RECREATE="$RECREATE traefik"; }
-      [ "$B_COMPOSE" != "$A_COMPOSE" ] && { echo "compose.yml 变了 → 挂载点/端口可能变,要重建 edge 与 traefik"; RECREATE="$RECREATE edge traefik"; }
-      if [ "$B_NGINX" != "$A_NGINX" ] && [ "$B_COMPOSE" = "$A_COMPOSE" ]; then
+      [ "$B_TRAEFIK" != "$A_TRAEFIK" ] && { echo "compose.yml 里 traefik 那一段变了 → 挂载点/端口可能变,要重建 traefik"; RECREATE="$RECREATE traefik"; }
+      [ "$B_EDGE"    != "$A_EDGE" ]    && { echo "compose.yml 里 edge 那一段变了 → 挂载点/端口可能变,要重建 edge"; RECREATE="$RECREATE edge"; }
+      if [ "$B_NGINX" != "$A_NGINX" ] && [ "$B_EDGE" = "$A_EDGE" ]; then
         echo "edge 的 nginx 配置变了 → 挂的是目录,reload 即可(不中断连接)"
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose exec -T edge nginx -t" || { echo "新的 nginx 配置校验不通过,已停在这里。机器上的文件已是新版本,修好再点一次。"; exit 1; }
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose exec -T edge nginx -s reload"
@@ -332,8 +350,9 @@ deploy-edge-config:
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose up -d --force-recreate --no-deps $UNIQ"
         sleep 10
       fi
-      if [ "$B_DYN" = "$A_DYN" ] && [ "$B_STATIC" = "$A_STATIC" ] && [ "$B_COMPOSE" = "$A_COMPOSE" ] && [ "$B_NGINX" = "$A_NGINX" ]; then
-        echo "四处配置一个字都没变,无事可做"
+      if [ "$B_DYN" = "$A_DYN" ] && [ "$B_STATIC" = "$A_STATIC" ] && [ "$B_EDGE" = "$A_EDGE" ] && [ "$B_TRAEFIK" = "$A_TRAEFIK" ] && [ "$B_NGINX" = "$A_NGINX" ]; then
+        echo "入口相关的配置一个字都没变,无事可做"
+        echo "(compose.yml 里别的服务改了不由本 job 生效 —— 它们各自的部署按钮会重建自己那个容器)"
       fi
 
       # ---------- 6. 验证 ----------
