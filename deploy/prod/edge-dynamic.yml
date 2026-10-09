@@ -119,10 +119,20 @@ http:
     po-strip:
       stripPrefix:
         prefixes: ["/pmo/dashboard/hwc"]
+    # 用**相对** Location,不要重建绝对 URL。
+    #
+    # 原来写的是 regex `^(https?://[^/]+)/pmo/dashboard/hwc$` + replacement `${1}/...`,
+    # 看着合理,实测跳到了 **http://**:本层在 edge 后面,TLS 已经被 edge 解掉,所以 traefik
+    # 眼里这个请求的 scheme 就是 http,`${1}` 捕到的自然是 `http://rpai...`。结果用户访问
+    # https 的地址会被打回明文 http,再由 edge 的 80 端口 302 回 https —— 多一跳,而且那一跳
+    # 带着完整路径走在明文上。test 那边同样的写法没暴露这个问题,因为 test 本来就是纯 http。
+    #
+    # 相对 Location(RFC 7231 允许)由浏览器按当前地址解析,scheme 和主机都原样保留,
+    # 既不写死域名、也不会降级到明文。router 已经用 Path() 精确匹配,所以 regex 用 `.*` 即可。
     po-slash-redirect:
       redirectRegex:
-        regex: "^(https?://[^/]+)/pmo/dashboard/hwc$"
-        replacement: "${1}/pmo/dashboard/hwc/"
+        regex: ".*"
+        replacement: "/pmo/dashboard/hwc/"
         permanent: true
 
   services:
