@@ -19,3 +19,5 @@ genius-ac-judge: compose genius-ac-judge
 po-reporting-portal: compose po-reporting-portal
 digital-chip-topology-configurator: compose topology-configurator
 # ReqFlow 结果核查。一个仓两个镜像,各占一行 —— 这一列是镜像名,后面是它对应的 compose 服务名。
+reqflow-result-check: compose reqflow-result-check
+reqflow-result-check-judge: compose reqflow-result-check-judge
