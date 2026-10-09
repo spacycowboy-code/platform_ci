@@ -59,6 +59,35 @@ http:
       priority: 50
       entryPoints: [web]
       service: grafana
+    # PO 报表看板(服务 po-reporting-portal,仓库 rp-ai-miao/pmo/dashboard-portal)。
+    #
+    # 这条是**本层独有的**:前端模板里没有对应的 location,因为前端从来没有服务过这个路径。
+    # 在这之前它只有裸端口入口 http://100.77.162.66:9020,没有域名、没有 TLS。所以这不是
+    # "复刻模板"而是新增一条对外路径 —— 这正是把路由表搬到本层之后才做得到的事:
+    # 加一条对外路径不再需要发一次前端版本。
+    #
+    # 为什么一个 stripPrefix 就够(不需要第二条不剥前缀的路由):v2 起这个应用是 FastAPI 单页,
+    # 资源与接口调用**全是相对路径**(服务仓 docs/PLATFORM_CI_PATCH.md 第 4 点写明了这一点;
+    # v1 的 Flask 多页版有 `window.location.href="/pm/"+name` 这种绝对跳转,当年确实要额外
+    # 一条 /pm/ 路由)。相对路径的前提是**浏览器的基准地址必须以斜杠结尾**,所以下面那条
+    # po-slash 不是可选项:少一个尾斜杠时 `static/x.js` 会解析到 /pmo/dashboard/static/x.js,
+    # 剥掉前缀后就是一个不存在的路径,表现为页面能开但样式和数据全空。
+    #
+    # 上传(xlsx,带 UPLOAD_TOKEN)走同一条路由。edge 那层 client_max_body_size 是 0(不限),
+    # 所以不会出现"端口直连能传、走域名被 413 打回"这种只在域名入口复现的毛病。
+    po:
+      rule: "PathPrefix(`/pmo/dashboard/hwc/`)"
+      priority: 100
+      entryPoints: [web]
+      middlewares: [po-strip]
+      service: po
+    # 少一个尾斜杠时补上。priority 要比上面那条高,否则 PathPrefix 先匹配、这条永远不生效。
+    po-slash:
+      rule: "Path(`/pmo/dashboard/hwc`)"
+      priority: 110
+      entryPoints: [web]
+      middlewares: [po-slash-redirect]
+      service: po
     # 对应模板 location / 与那条静态资源的 location:
     # index.html 回退(try_files)、/ 的 no-cache、静态资源的 expires 7d 都在前端容器里,
     # 所以整个 / 交给它,这些行为自动保留 —— 不要在这一层重新实现缓存头。
@@ -84,6 +113,17 @@ http:
     wc-add:
       addPrefix:
         prefix: "/api"
+    # PO 报表看板:整个前缀都剥掉,应用在容器里仍然认为自己挂在根上。
+    # 注意 prefixes 不带尾斜杠(traefik 的 stripPrefix 约定),而上面的 rule 带 ——
+    # rule 带斜杠是为了不误匹配 /pmo/dashboard/hwcxxx 这类前缀相同的路径。
+    po-strip:
+      stripPrefix:
+        prefixes: ["/pmo/dashboard/hwc"]
+    po-slash-redirect:
+      redirectRegex:
+        regex: "^(https?://[^/]+)/pmo/dashboard/hwc$"
+        replacement: "${1}/pmo/dashboard/hwc/"
+        permanent: true
 
   services:
     psi:
@@ -95,6 +135,14 @@ http:
     work-connector:
       loadBalancer:
         servers: [{url: "http://work-connector:8000"}]
+    po:
+      loadBalancer:
+        # 服务名直达,不走宿主机的 9020。实测 traefik 与 po-reporting-portal 同在
+        # prod-env_default 网络,从该网络按服务名打 /health 返回 {"status":"ok"}。
+        #
+        # 9020 这个宿主机端口暂时保留(服务仓文档里写着"沿用,不变"),但有了这条路由之后
+        # 它就只剩"老用户的旧书签"这一个用途,可以和 9000/9010 一起在 2.2 里收掉。
+        servers: [{url: "http://po-reporting-portal:8000"}]
     audit:
       loadBalancer:
         # 曾经写的是 100.77.162.66:9000(绕宿主机发布端口走一圈)。改成服务名的理由同
