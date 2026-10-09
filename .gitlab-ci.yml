@@ -221,11 +221,26 @@ deploy-grafana-config:
 #   `nginx -t` 校验的是旧配置、`nginx -s reload` 报成功而一个字没变。
 #
 # 重启判据分三档,因为三种配置的生效方式完全不同:
-#   * edge-dynamic.yml(路由表)  → traefik 热加载,**什么都不用做**
+#   * edge-dynamic.yml(路由表)  → **重建 traefik**(见下面那段"为什么不敢靠热加载")
 #   * edge-static.yml(入口、超时) → traefik 启动时只读一次,必须重建 traefik
 #   * compose.yml 里 **edge 或 traefik 自己那一段** → 挂载点或端口可能变了,重建对应容器
 #   * edge/ 下的 nginx 配置 → 挂的是目录,nginx -t 然后 reload,不中断连接
-# 三档分开的意义是:改路由这种最常见的操作完全不碰容器,而 443 那个容器只在真有必要时才动。
+#
+# **为什么路由表变了也要重建 traefik,而不是靠 providers.file 的 watch 热加载:**
+# 因为那个 watch 实测**不可靠**,而它失效的方式是静默的 —— 2026-10-09 一天之内两种结果都
+# 撞到了:
+#   * 上午加 /pmo/dashboard/hwc 那条,用 ssh 的 `cat > 文件` 原地覆写 → 热加载成功、零中断;
+#   * 下午下线 work-connector,本 job 用 rsync --inplace 原地覆写 → 文件确实写进去了
+#     (itemize 是 `<f.st......`,机器上的 md5 与仓库一致、work-connector 只剩注释),
+#     但 traefik 的访问日志仍然显示 `"work-connector@file"` 在往已删除的容器转发,
+#     表现是那条路径 502。重建 traefik 之后立刻恢复正常(落到 /api/ 兜底,答 401)。
+# 两次都是同一个文件、同一个 inode、同一个挂载方式,结果不同 —— 所以这是个会偶发失效的
+# 机制。配置是否生效这件事不能依赖偶发成功的机制,宁可每次多花几秒。
+#
+# 代价说清:重建 traefik 期间 edge 会有几秒 502(edge **不动**,所以不是连接被拒,整站
+# 仍然可达、只是网关错误)。比起"配置没生效却报成功"这种静默失败,这个代价值得付。
+# 真要回到零中断,正确做法是给 traefik 开 api(绑回环)让本 job 能查实时路由表、
+# 验不过再重建 —— 那是另一件事,见仓库 ROADMAP。
 #
 # **compose.yml 的判据是"只比 edge 与 traefik 那两段",不是比整个文件。** 第一版比的是
 # 整个文件,结果任何一处 compose 改动都会重启整站入口 —— 2026-10-09 下线 work-connector
@@ -332,6 +347,7 @@ deploy-edge-config:
       A_EDGE=$(BLOCK edge); A_TRAEFIK=$(BLOCK traefik)
       A_NGINX=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/edge/*.conf 2>/dev/null | md5sum | cut -d' ' -f1")
       RECREATE=""
+      [ "$B_DYN"     != "$A_DYN" ]     && { echo "edge-dynamic.yml(路由表)变了 → 不靠 watch 热加载,重建 traefik(理由见本 job 开头)"; RECREATE="$RECREATE traefik"; }
       [ "$B_STATIC"  != "$A_STATIC" ]  && { echo "edge-static.yml 变了 → traefik 启动时才读,要重建"; RECREATE="$RECREATE traefik"; }
       [ "$B_TRAEFIK" != "$A_TRAEFIK" ] && { echo "compose.yml 里 traefik 那一段变了 → 挂载点/端口可能变,要重建 traefik"; RECREATE="$RECREATE traefik"; }
       [ "$B_EDGE"    != "$A_EDGE" ]    && { echo "compose.yml 里 edge 那一段变了 → 挂载点/端口可能变,要重建 edge"; RECREATE="$RECREATE edge"; }
@@ -340,17 +356,16 @@ deploy-edge-config:
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose exec -T edge nginx -t" || { echo "新的 nginx 配置校验不通过,已停在这里。机器上的文件已是新版本,修好再点一次。"; exit 1; }
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose exec -T edge nginx -s reload"
       fi
-      if [ "$B_DYN" != "$A_DYN" ] && [ -z "$RECREATE" ]; then
-        echo "只有路由表变了 → traefik 的 file provider 热加载,不动任何容器"
-        sleep 5
-      fi
       if [ -n "$RECREATE" ]; then
         UNIQ=$(echo $RECREATE | tr ' ' '\n' | sort -u | tr '\n' ' ')
-        echo "重建:$UNIQ ——【注意 edge 持有 443,重建它会有一两秒全站连接中断】"
+        case "$UNIQ" in
+          *edge*) echo "重建:$UNIQ ——【edge 持有 443,重建它会有一两秒全站连接被拒】" ;;
+          *)      echo "重建:$UNIQ ——【edge 不动,所以是几秒 502 而不是连接被拒,整站仍然可达】" ;;
+        esac
         $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose up -d --force-recreate --no-deps $UNIQ"
-        sleep 10
+        sleep 12
       fi
-      if [ "$B_DYN" = "$A_DYN" ] && [ "$B_STATIC" = "$A_STATIC" ] && [ "$B_EDGE" = "$A_EDGE" ] && [ "$B_TRAEFIK" = "$A_TRAEFIK" ] && [ "$B_NGINX" = "$A_NGINX" ]; then
+      if [ -z "$RECREATE" ] && [ "$B_NGINX" = "$A_NGINX" ]; then
         echo "入口相关的配置一个字都没变,无事可做"
         echo "(compose.yml 里别的服务改了不由本 job 生效 —— 它们各自的部署按钮会重建自己那个容器)"
       fi
