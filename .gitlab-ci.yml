@@ -204,6 +204,159 @@ deploy-grafana-config:
       # 容器里那个目录是空的,disableDeletion: false 于是把库里的看板删掉。必须让 job 红。
       [ -n "$OK" ] || { echo "grafana 里一个看板都没有 —— 检查挂载点与 provider 的 options.path 是否一致"; exit 1; }
 
+# ---------- 入口与路由层的部署入口 ----------
+# edge(TLS、域名、443)与 traefik(路由表)都**不在 services.txt 里**,所以没有任何服务仓能
+# 触发它们的部署。在这个 job 出现之前,改一条路由的真实步骤是「提 MR → 合并 → 找人 ssh 上去
+# 手工覆写文件」,第三步没有记录、没有校验,而且漏掉它的话生产一个字都不会变 —— 看起来却
+# 像是已经上线了。2026-10-08 与 10-09 两次改动都是这么手工做的,这个 job 就是来消掉那一步的。
+#
+# 为什么用 rsync --inplace(这是本 job 最关键的一个选项):
+#   compose.yml 里 traefik 的两个配置是**按文件** bind mount 的
+#   (./edge-static.yml:/etc/traefik/static.yml、./edge-dynamic.yml:/etc/traefik/dynamic.yml),
+#   而普通 rsync 是「写临时文件再 rename」,rename 会换 inode —— 容器里的挂载仍然指着旧
+#   inode,于是 traefik 的 watch 什么都察觉不到,配置永远不生效**而且全程不报错**。
+#   --inplace 直接写进原文件,inode 不变,traefik 的 file provider 当场热加载。
+#   2026-10-09 加 /pmo/dashboard/hwc 那条路由时实测:原地覆写 → 路由立刻生效、零中断、
+#   不需要重建任何容器。而 10-08 改 edge/nginx.conf 那次用的是换 inode 的方式,结果
+#   `nginx -t` 校验的是旧配置、`nginx -s reload` 报成功而一个字没变。
+#
+# 重启判据分三档,因为三种配置的生效方式完全不同:
+#   * edge-dynamic.yml(路由表)  → traefik 热加载,**什么都不用做**
+#   * edge-static.yml(入口、超时) → traefik 启动时只读一次,必须重建 traefik
+#   * compose.yml / edge/ 下的 nginx 配置 → 挂载点或端口可能变了,必须重建对应容器
+# 三档分开的意义是:改路由这种最常见的操作完全不碰容器,而 443 那个容器只在真有必要时才动。
+deploy-edge-config:
+  stage: deploy
+  image: $REGISTRY/dockerhub-ericsson-remote/docker:26.1.4
+  rules:
+    # 服务仓触发的部署流水线里不要出现这个按钮
+    - if: '$DEPLOY_ENV'
+      when: never
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+  variables:
+    EDGE_ENV: prod
+  environment:
+    name: $EDGE_ENV
+  before_script:
+    - apk add --no-cache openssh-client rsync
+  script:
+    - |
+      : "${DEPLOY_HOST:?未设置}"; : "${DEPLOY_USER:?未设置}"; : "${DEPLOY_SSH_KEY:?未设置}"
+      SRC="deploy/$EDGE_ENV"
+      case "$EDGE_ENV" in
+        prod) HOST_DIR=/proj/rp_ait_prod/services/prod-env; DOMAIN=https://rpai.ews.gic.ericsson.se ;;
+        *) echo "本 job 目前只支持 prod:test 的 traefik 在集群里、配置走 swarm config,由 swarm-apply.sh 管"; exit 1 ;;
+      esac
+
+      # ---------- 1. 上车前的静态检查 ----------
+      # 这三个文件任何一个坏了,后果都是整站级的,所以宁可在这里红。
+      for f in edge-static.yml edge-dynamic.yml compose.yml edge/nginx.conf; do
+        test -s "$SRC/$f" || { echo "$SRC/$f 不存在或是空文件,拒绝部署"; exit 1; }
+      done
+      # 路由表至少要有这三段,否则 traefik 会加载一份「语法正确但一条路由都没有」的配置,
+      # 表现是整站 404 —— 而 traefik 自己不认为这是错误。
+      for k in "routers:" "services:" "middlewares:"; do
+        grep -q "^  $k" "$SRC/edge-dynamic.yml" || { echo "edge-dynamic.yml 里缺少 $k 段,拒绝部署"; exit 1; }
+      done
+      # 每个 router 指向的 service / middleware 必须存在。写错一个名字,那条路由静默失效
+      # (traefik 不认为这是错误,只是那条规则不生效)。
+      #
+      # 必须**按段**查,不能全文 grep:routers / middlewares / services 三段的键缩进完全相同,
+      # 全文 grep "^    po:" 会被 router 自己的 po: 匹配上 —— 于是 "service: po" 这条检查
+      # 在根本没有 po 这个 service 的情况下也会通过,等于白做。
+      SECTION() { awk -v s="  $1:" '$0==s{f=1;next} f&&/^  [a-z]/{exit} f' "$2" | sed -n 's/^    \([a-z0-9_-]*\):.*$/\1/p' | sort -u; }
+      SVCS=$(SECTION services "$SRC/edge-dynamic.yml")
+      MWS=$(SECTION middlewares "$SRC/edge-dynamic.yml")
+      RTRS=$(SECTION routers "$SRC/edge-dynamic.yml")
+      [ -n "$SVCS" ] && [ -n "$RTRS" ] || { echo "routers 或 services 段里一个键都没解析出来,拒绝部署"; exit 1; }
+      MISSING=""
+      for s in $(sed -n 's/^      service: *\([a-z0-9_-]*\).*/\1/p' "$SRC/edge-dynamic.yml" | sort -u); do
+        echo "$SVCS" | grep -qx "$s" || MISSING="$MISSING service:$s"
+      done
+      for m in $(sed -n 's/^      middlewares: *\[\(.*\)\].*/\1/p' "$SRC/edge-dynamic.yml" | tr -d ' ' | tr ',' '\n' | sort -u); do
+        [ -z "$m" ] && continue
+        echo "$MWS" | grep -qx "$m" || MISSING="$MISSING middleware:$m"
+      done
+      [ -z "$MISSING" ] || { echo "路由表里有悬空引用:$MISSING"; exit 1; }
+      echo "静态检查通过。"
+      echo "  router:   $(echo $RTRS | tr '\n' ' ')"
+      echo "  service:  $(echo $SVCS | tr '\n' ' ')"
+
+      # ---------- 2. 准备私钥 ----------
+      # File 类型变量带 CRLF 且末尾可能缺换行,直接用会 "error in libcrypto"。
+      mkdir -p ~/.ssh
+      tr -d '\r' < "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+      printf '\n' >> ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+      ssh-keygen -y -P "" -f ~/.ssh/id_deploy >/dev/null || { echo "私钥不可解析"; exit 1; }
+      SSHOPT="-i $HOME/.ssh/id_deploy -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      SSH="ssh $SSHOPT"
+
+      # ---------- 3. 记下改之前的状态 ----------
+      HASH() { $SSH "$DEPLOY_USER@$DEPLOY_HOST" "md5sum $HOST_DIR/$1 2>/dev/null | cut -d' ' -f1"; }
+      B_DYN=$(HASH edge-dynamic.yml); B_STATIC=$(HASH edge-static.yml); B_COMPOSE=$(HASH compose.yml)
+      B_NGINX=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/edge/*.conf 2>/dev/null | md5sum | cut -d' ' -f1")
+
+      # 改之前的基线:状态码 + 响应体 md5。改完逐条对比,任何一条不一样就让 job 红。
+      PATHS="/ /api/version /grafana/"
+      BASE=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "for p in $PATHS; do printf '%s=%s/%s ' \"\$p\" \"\$(curl -sk -o /tmp/.eb -w '%{http_code}' --max-time 20 '$DOMAIN'\$p)\" \"\$(md5sum /tmp/.eb | cut -c1-8)\"; done; rm -f /tmp/.eb")
+      echo "改之前的基线: $BASE"
+
+      # ---------- 4. 原地同步 ----------
+      # --inplace 是刻意的,理由见本 job 开头那段注释。不要换成普通 rsync 或 scp。
+      # edge/ 自 !58 起是挂目录,所以可以用 --delete;两个 yml 是挂文件,只能逐个 --inplace。
+      rsync --inplace -t -e "$SSH" --itemize-changes "$SRC/edge-static.yml"  "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/edge-static.yml"
+      rsync --inplace -t -e "$SSH" --itemize-changes "$SRC/edge-dynamic.yml" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/edge-dynamic.yml"
+      rsync --inplace -t -e "$SSH" --itemize-changes "$SRC/compose.yml"      "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/compose.yml"
+      rsync --inplace -rlt --delete -e "$SSH" --itemize-changes "$SRC/edge/" "$DEPLOY_USER@$DEPLOY_HOST:$HOST_DIR/edge/"
+
+      # ---------- 5. 按改了什么决定做什么 ----------
+      A_DYN=$(HASH edge-dynamic.yml); A_STATIC=$(HASH edge-static.yml); A_COMPOSE=$(HASH compose.yml)
+      A_NGINX=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "cat $HOST_DIR/edge/*.conf 2>/dev/null | md5sum | cut -d' ' -f1")
+      RECREATE=""
+      [ "$B_STATIC"  != "$A_STATIC" ]  && { echo "edge-static.yml 变了 → traefik 启动时才读,要重建"; RECREATE="$RECREATE traefik"; }
+      [ "$B_COMPOSE" != "$A_COMPOSE" ] && { echo "compose.yml 变了 → 挂载点/端口可能变,要重建 edge 与 traefik"; RECREATE="$RECREATE edge traefik"; }
+      if [ "$B_NGINX" != "$A_NGINX" ] && [ "$B_COMPOSE" = "$A_COMPOSE" ]; then
+        echo "edge 的 nginx 配置变了 → 挂的是目录,reload 即可(不中断连接)"
+        $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose exec -T edge nginx -t" || { echo "新的 nginx 配置校验不通过,已停在这里。机器上的文件已是新版本,修好再点一次。"; exit 1; }
+        $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose exec -T edge nginx -s reload"
+      fi
+      if [ "$B_DYN" != "$A_DYN" ] && [ -z "$RECREATE" ]; then
+        echo "只有路由表变了 → traefik 的 file provider 热加载,不动任何容器"
+        sleep 5
+      fi
+      if [ -n "$RECREATE" ]; then
+        UNIQ=$(echo $RECREATE | tr ' ' '\n' | sort -u | tr '\n' ' ')
+        echo "重建:$UNIQ ——【注意 edge 持有 443,重建它会有一两秒全站连接中断】"
+        $SSH "$DEPLOY_USER@$DEPLOY_HOST" "cd $HOST_DIR && docker compose up -d --force-recreate --no-deps $UNIQ"
+        sleep 10
+      fi
+      if [ "$B_DYN" = "$A_DYN" ] && [ "$B_STATIC" = "$A_STATIC" ] && [ "$B_COMPOSE" = "$A_COMPOSE" ] && [ "$B_NGINX" = "$A_NGINX" ]; then
+        echo "四处配置一个字都没变,无事可做"
+      fi
+
+      # ---------- 6. 验证 ----------
+      # 两个容器都得在跑。traefik 的镜像是 FROM scratch,所以只能看 docker 的健康状态。
+      $SSH "$DEPLOY_USER@$DEPLOY_HOST" "docker ps --filter name=rp-ai-edge --filter name=rp-ai-traefik --format '  {{.Names}} {{.Status}}'"
+      for c in rp-ai-edge rp-ai-traefik; do
+        $SSH "$DEPLOY_USER@$DEPLOY_HOST" "docker ps --format '{{.Names}}' | grep -qx $c" || { echo "$c 没在跑"; exit 1; }
+      done
+      AFTER=$($SSH "$DEPLOY_USER@$DEPLOY_HOST" "for p in $PATHS; do printf '%s=%s/%s ' \"\$p\" \"\$(curl -sk -o /tmp/.ea -w '%{http_code}' --max-time 20 '$DOMAIN'\$p)\" \"\$(md5sum /tmp/.ea | cut -c1-8)\"; done; rm -f /tmp/.ea")
+      echo "改之后: $AFTER"
+      # 逐条对比。这几条是「不该因为改路由而变化」的核心路径 —— 变了就是回归,必须红。
+      # 新增一条路由不会影响它们;真要故意改掉其中一条的行为,把它从 PATHS 里拿掉并说明理由。
+      if [ "$BASE" != "$AFTER" ]; then
+        echo "核心路径的状态码或响应体变了 —— 这是回归。"
+        echo "  改之前: $BASE"
+        echo "  改之后: $AFTER"
+        echo "回滚:git revert 那个提交,再点一次这个按钮。"
+        exit 1
+      fi
+      echo "核心路径与改之前完全一致,没有回归。"
+      # 顺手把两侧的 5xx 数出来,只打印不判断 —— 这几分钟里的 5xx 可能来自别人的请求。
+      $SSH "$DEPLOY_USER@$DEPLOY_HOST" "printf '  edge 近 5 分钟 5xx=%s\n' \"\$(docker logs --since 5m rp-ai-edge 2>&1 | grep -cE 'HTTP/[0-9.]+\" 5')\"; printf '  traefik 近 5 分钟 5xx=%s\n' \"\$(docker logs --since 5m rp-ai-traefik 2>&1 | grep -cE '\" 5[0-9][0-9] ')\""
+
 # ---------- 版本集合 ----------
 # 需求里的"前端版本 A + 服务 B 的 B1 + …组成一个稳定版本"。
 #
